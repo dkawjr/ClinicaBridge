@@ -41,7 +41,7 @@ const LS = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
 
-let profile = LS.get("cb_profile", null); // {name,title,goal,level,daily}
+let profile = LS.get("cb_profile", null); // {name,title,goal,story,struggles[],level,daily,ntfy:{on,topic}}
 let settings = LS.get("cb_settings", { dialect: "es-MX", voiceURI: "", rate: 0.95, showEn: true, cam: true, rec: false, reveal: false });
 let progress = LS.get("cb_progress", {
   latidos: 0, phrases: 0, encounters: 0, seconds: 0,
@@ -49,14 +49,27 @@ let progress = LS.get("cb_progress", {
   streak: 0, lastGoalDate: "",
   best: {},           // scenarioId -> best %
   drill: {},          // setId -> {idx: bestScore}
+  days: {},           // "YYYY-MM-DD" -> latidos that day
+  history: []         // [{d, id, title, acc}] newest first
 });
 let customScenarios = LS.get("cb_custom", []);
+let scripts = LS.get("cb_scripts", []); // saved free-practice lists [{id,title,phrases[]}]
+
+// tolerate profiles/progress saved by older versions
+if (profile) {
+  profile.struggles = profile.struggles || [];
+  profile.story = profile.story || "";
+  profile.ntfy = profile.ntfy || { on: false, topic: "" };
+}
+progress.days = progress.days || {};
+progress.history = progress.history || [];
 
 function saveAll() {
   LS.set("cb_profile", profile);
   LS.set("cb_settings", settings);
   LS.set("cb_progress", progress);
   LS.set("cb_custom", customScenarios);
+  LS.set("cb_scripts", scripts);
 }
 
 function displayName() {
@@ -69,6 +82,10 @@ function rollDay() {
   if (progress.today.date !== todayKey()) {
     progress.today = { date: todayKey(), latidos: 0 };
   }
+  // an unbroken streak means the goal was met today or yesterday
+  if (progress.streak && progress.lastGoalDate && progress.lastGoalDate < yesterdayKey()) {
+    progress.streak = 0;
+  }
 }
 
 function awardLatidos(n, quiet) {
@@ -76,6 +93,10 @@ function awardLatidos(n, quiet) {
   progress.latidos += n;
   const before = progress.today.latidos;
   progress.today.latidos += n;
+  progress.days[todayKey()] = progress.today.latidos;
+  // keep the day log tidy (last ~60 days)
+  const dk = Object.keys(progress.days).sort();
+  while (dk.length > 60) delete progress.days[dk.shift()];
   const goal = profile ? +profile.daily : 40;
   if (before < goal && progress.today.latidos >= goal) {
     // daily goal just met -> streak logic
@@ -84,11 +105,42 @@ function awardLatidos(n, quiet) {
     progress.lastGoalDate = todayKey();
     confetti(80);
     toast(`🔥 ¡Meta diaria cumplida, ${displayName()}! Racha: ${progress.streak} día${progress.streak === 1 ? "" : "s"}`);
+    const mile = progress.streak > 1 && progress.streak % 7 === 0 ? ` ¡${progress.streak} días seguidos — una semana más! 🏆` : "";
+    pushNtfy(`Meta diaria cumplida - ${profile ? profile.name : ""}`,
+      `💗 ${progress.today.latidos} latidos hoy (meta: ${goal}). Racha: **${progress.streak} días**.${mile} ¡Sigue así!`, "tada");
   } else if (!quiet && n > 0) {
     toast(`+${n} latidos 💗`);
   }
   saveAll();
   renderHeader();
+}
+
+// ---------------- ntfy: the cheer channel ----------------
+const ascii = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\x20-\x7E]/g, "");
+function makeTopic(name) {
+  const slug = norm(name || (profile ? profile.name : "") || "amiga").replace(/\s+/g, "").slice(0, 12) || "amiga";
+  return `clinicabridge-${slug}-${Math.random().toString(36).slice(2, 6)}`;
+}
+function pushNtfy(title, body, tags = "sparkling_heart") {
+  if (!profile || !profile.ntfy || !profile.ntfy.on || !profile.ntfy.topic) return;
+  try {
+    fetch("https://ntfy.sh/" + profile.ntfy.topic, {
+      method: "POST", body,
+      headers: { Title: ascii(title), Tags: tags, Priority: "default", Markdown: "yes" }
+    }).catch(() => {});
+  } catch {}
+}
+function ntfyTest(topic, name) {
+  const t = topic || (profile && profile.ntfy && profile.ntfy.topic);
+  const who = name || (profile ? profile.name : "");
+  if (!t) return;
+  try {
+    fetch("https://ntfy.sh/" + t, {
+      method: "POST",
+      body: `¡Hola${who ? " " + who : ""}! 💗 Este es tu canal de porras de ClínicaBridge. Cada vez que cumplas tu meta o rompas un récord, te avisamos aquí. ¡Tú puedes!`,
+      headers: { Title: "Porra de prueba - ClinicaBridge", Tags: "partying_face", Markdown: "yes" }
+    }).then(() => toast("📣 ¡Porra enviada! Revisa tu teléfono.")).catch(() => toast("No se pudo enviar — ¿hay internet?"));
+  } catch { toast("No se pudo enviar — ¿hay internet?"); }
 }
 
 // ---------------- header / home stats ----------------
@@ -262,16 +314,22 @@ function speak(text, opts = {}) {
 }
 
 // ---------------- navigation ----------------
-const VIEWS = ["home", "drill", "deck", "builder", "sim"];
+const VIEWS = ["home", "drill", "deck", "builder", "sim", "progress", "free"];
 function show(view) {
   VIEWS.forEach(v => $("view-" + v).classList.toggle("active", v === view));
   if (view !== "sim") teardownSim();
   stopListening();
   speechSynthesis.cancel();
   if (view === "home") { renderHome(); window.scrollTo(0, 0); }
+  if (view === "progress") { renderProgress(); window.scrollTo(0, 0); }
 }
 document.querySelectorAll("[data-nav]").forEach(b => b.addEventListener("click", () => show(b.dataset.nav)));
 $("homeBtn").addEventListener("click", () => show("home"));
+$("progressChip").addEventListener("click", () => show("progress"));
+$("chipStreak").style.cursor = "pointer";
+$("chipGoal").style.cursor = "pointer";
+$("chipStreak").addEventListener("click", () => show("progress"));
+$("chipGoal").addEventListener("click", () => show("progress"));
 
 // ---------------- home rendering ----------------
 function doorHTML(sc, custom) {
@@ -331,6 +389,69 @@ function renderHome() {
       <span class="t-prog">${d.cards.length}</span>
     </button>`).join("");
   document.querySelectorAll("[data-deck]").forEach(t => t.addEventListener("click", () => startDeck(t.dataset.deck)));
+
+  // saved free-practice lists
+  $("scriptsGrid").innerHTML = scripts.map(s => `
+    <button class="tile" data-script="${s.id}">
+      <span class="ico">📝</span>
+      <span><span class="t-title">${s.title}</span><br><span class="t-sub">${s.phrases.length} frases</span></span>
+      <span class="t-prog script-tile-del" data-sdel="${s.id}" title="Borrar">✕</span>
+    </button>`).join("") +
+    `<button class="tile" id="newScript"><span class="ico">➕</span><span><span class="t-title">Nueva pr&aacute;ctica</span><br><span class="t-sub">paste your own text</span></span></button>`;
+  document.querySelectorAll("[data-script]").forEach(t => t.addEventListener("click", e => {
+    const del = e.target.closest("[data-sdel]");
+    if (del) { e.stopPropagation(); scripts = scripts.filter(x => x.id !== del.dataset.sdel); saveAll(); renderHome(); toast("Práctica borrada."); return; }
+    const s = scripts.find(x => x.id === t.dataset.script);
+    if (s) startFree(s.title, s.phrases);
+  }));
+  $("newScript").addEventListener("click", () => { openFreeSetup(); show("free"); });
+
+  renderPlan();
+}
+
+// ---------------- Tu plan de hoy (tailored from onboarding) ----------------
+const STRUGGLE_LABELS = { pron: "🌀 pronunciación", listen: "👂 comprensión", gram: "🧩 gramática", vocab: "📚 vocabulario", numeros: "🔢 números y dosis", freeze: "🧊 confianza" };
+function buildPlan() {
+  if (!profile) return [];
+  const items = [];
+  const st = profile.struggles || [];
+  const notMastered = allScenarios().filter(s => (progress.best[s.id] || 0) < 85);
+  // 1) always: the next room to conquer, framed by her goal
+  if (notMastered.length) {
+    const pick = profile.level === "ceiba"
+      ? notMastered.slice().sort((a, b) => (b.difficulty || 0) - (a.difficulty || 0))[0]
+      : notMastered.slice().sort((a, b) => (a.difficulty || 0) - (b.difficulty || 0))[0];
+    const why = profile.goal === "osce" ? "tu próximo caso estilo OSCE"
+      : profile.goal === "rotaciones" ? "para que en el hospital te salga solo"
+      : profile.goal === "comunidad" ? "una conversación que alguien de tu comunidad necesita"
+      : "tu próxima historia por dominar";
+    const best = progress.best[pick.id];
+    items.push({ emoji: "🚪", label: `Sala ${pick.room || "★"} · ${pick.title}`, why: best ? `subir tu ${best}% — ${why}` : why, run: () => startSim(pick.id) });
+  }
+  // 2) from her struggles
+  if (st.includes("pron")) items.push({ emoji: "🌀", label: "Drill: Examen físico", why: "puro músculo de pronunciación — dijiste que la rr y la j se resisten", run: () => startDrill("examen") });
+  if (st.includes("vocab")) { const d = DECKS[Math.floor(Math.random() * DECKS.length)]; items.push({ emoji: "📚", label: `Tarjetas: ${d.title}`, why: "5 minutos de vocabulario — para que las palabras se queden", run: () => startDeck(d.id) }); }
+  if (st.includes("numeros")) items.push({ emoji: "🔢", label: "Tarjetas: Números y dosis", why: "dosis y fechas sin titubear — tú lo pediste", run: () => startDeck("numeros") });
+  if (st.includes("gram")) items.push({ emoji: "🧩", label: "Drill: Historia clínica", why: "armar preguntas completas, una y otra vez", run: () => startDrill("historia") });
+  if (st.includes("listen")) { const s2 = SCENARIOS[1]; items.push({ emoji: "👂", label: `Sala 02 · ${s2.title}`, why: "escucha a la Sra. López y usa ↻ repetir sin pena — así se entrena el oído", run: () => startSim(s2.id) }); }
+  if (st.includes("freeze")) items.push({ emoji: "🧊", label: "Drill: Saludos y presentación", why: "frases de arranque en automático = nunca más congelarte al entrar", run: () => startDrill("saludos") });
+  // 3) her own material
+  if (scripts.length) { const s = scripts[0]; items.push({ emoji: "📝", label: `Tu práctica: ${s.title}`, why: "lo que TÚ quisiste trabajar", run: () => startFree(s.title, s.phrases) }); }
+  else items.push({ emoji: "📝", label: "Práctica libre", why: "pega tu propio guion y te lo calificamos en vivo", run: () => { openFreeSetup(); show("free"); } });
+  return items.slice(0, 3);
+}
+function renderPlan() {
+  const items = buildPlan();
+  const block = $("planBlock");
+  if (!profile || !items.length) { block.style.display = "none"; return; }
+  block.style.display = "block";
+  $("planTitle").textContent = `Tu plan de hoy, ${profile.name}`;
+  $("planGrid").innerHTML = items.map((it, i) => `
+    <button class="plan-item" data-plan="${i}">
+      <span class="p-emoji">${it.emoji}</span>
+      <span><span class="p-label">${it.label}</span><br><span class="p-why">${it.why}</span></span>
+    </button>`).join("");
+  block.querySelectorAll("[data-plan]").forEach(b => b.addEventListener("click", () => items[+b.dataset.plan].run()));
 }
 
 // ---------------- karaoke strip rendering ----------------
@@ -384,6 +505,7 @@ function renderDrillPhrase() {
   $("drillLive").innerHTML = "Pulsa <b>Hablar</b> y di la frase.";
   $("drillMicDot").classList.remove("live");
   const tip = PRONUN_TIPS[(idx + set.title.length) % PRONUN_TIPS.length];
+  $("drillTip").className = "tip-box";
   $("drillTip").style.display = "block";
   $("drillTip").innerHTML = `<b>TIP DE PRONUNCIACIÓN</b>${tip}`;
 }
@@ -414,7 +536,9 @@ function drillTalk() {
       const prev = (progress.drill[drill.set.id] = progress.drill[drill.set.id] || {})[idx] || 0;
       progress.drill[drill.set.id][idx] = Math.max(prev, pct);
       awardLatidos(pct >= 80 ? 10 : pct >= 50 ? 5 : 2, true);
-      toast(pct >= 80 ? `${cheer()} +${pct >= 80 ? 10 : 5} latidos 💗` : nudge());
+      $("drillTip").className = "coach-box";
+      renderCoach($("drillTip"), p.es, best.statuses, best.score);
+      toast(pct >= 80 ? `${cheer()} +10 latidos 💗` : nudge());
     }
   });
 }
@@ -453,6 +577,206 @@ $("fcAgain").addEventListener("click", () => {
   renderCard();
 });
 $("fcListen").addEventListener("click", () => speak(deck.d.cards[deck.order[deck.pos]].es));
+
+// ============================================================
+// COACH — constructive feedback from what was missed
+// ============================================================
+function coachTips(missedWords) {
+  const tips = [];
+  const joined = missedWords.join(" ").toLowerCase();
+  if (/rr/.test(joined)) tips.push("La «rr» se vibra con la punta de la lengua — practica despacio: pe-rro, ca-rro.");
+  if (/j|ge|gi/.test(joined)) tips.push("La «j» (y ge/gi) suena como una «h» inglesa fuerte: ojo, urgencias, gente.");
+  if (/ñ/.test(joined)) tips.push("La «ñ» es como «ny» en canyon: riñón, año, mañana.");
+  if (/ll|y/.test(joined)) tips.push("La «ll» y la «y» suenan igual, como la «y» de yes: pastilla, ayuda.");
+  if (/^h| h/.test(" " + joined)) tips.push("La «h» es muda — «hígado» empieza directo con la «í».");
+  if (/[áéíóú]/.test(joined)) tips.push("Ojo con el acento escrito — esa sílaba se pronuncia MÁS fuerte: corazón, análisis.");
+  if (/ción|sión/.test(joined)) tips.push("Las palabras en -ción llevan la fuerza al final: presión, respiración.");
+  return tips.slice(0, 3);
+}
+function renderCoach(el, targetEs, statuses, score) {
+  const displayToks = targetEs.split(/\s+/).filter(t => tokens(t).length);
+  const missed = displayToks.filter((_, i) => statuses[i] === "miss");
+  const close = displayToks.filter((_, i) => statuses[i] === "close");
+  el.style.display = "block";
+  let html = `<b class="c-head">TU COACH 🫀</b>`;
+  if (score >= 0.95) {
+    html += `Impecable — se te entendió cada palabra. Súbele un poco a la velocidad y queda perfecto.`;
+  } else if (!missed.length && !close.length) {
+    html += `¡Muy bien! Se entendió todo. Repítela una vez más con confianza y pasa a la siguiente.`;
+  } else {
+    if (score >= 0.7) html += `Vas muy bien — el mensaje se entendió. Vamos a pulir lo que faltó:`;
+    else if (score >= 0.4) html += `Buen intento — se entendió una parte. Enfócate en estas palabras:`;
+    else html += `Tranquila, esto es lo difícil de verdad. Escucha la frase (🔊), dila en trocitos, y otra vez:`;
+    const chips = [...missed.map(w => ({ w, k: "miss" })), ...close.map(w => ({ w, k: "close" }))];
+    html += `<div class="miss-chips">${chips.map(c => `<span class="miss-chip" data-say="${c.w.replace(/"/g, "")}"${c.k === "close" ? ' style="color:var(--ambar); border-color:#E4D2A0"' : ""}>🔊 ${c.w}</span>`).join("")}</div>`;
+    const tips = coachTips([...missed, ...close]);
+    if (tips.length) html += `<ul>${tips.map(t => `<li>${t}</li>`).join("")}</ul>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll("[data-say]").forEach(ch => ch.addEventListener("click", () => speak(ch.dataset.say, { rate: 0.8 })));
+}
+
+// ============================================================
+// FREE PRACTICE — her own material, graded live
+// ============================================================
+let free = null; // {title, phrases, idx}
+function splitPhrases(text) {
+  return text.split(/\n+|(?<=[.!?…])\s+/)
+    .map(s => s.trim())
+    .filter(s => tokens(s).length >= 2);
+}
+function openFreeSetup() {
+  $("freeSetup").style.display = "block";
+  $("freeRun").style.display = "none";
+}
+function startFree(title, phrases) {
+  free = { title: title || "Mi práctica", phrases, idx: 0 };
+  show("free");
+  $("freeSetup").style.display = "none";
+  $("freeRun").style.display = "block";
+  $("freeRunTitle").textContent = free.title;
+  renderFreePhrase();
+}
+function renderFreePhrase() {
+  const p = free.phrases[free.idx];
+  $("freeCount").textContent = `${free.idx + 1} / ${free.phrases.length}`;
+  renderKaraoke($("freeWords"), p, null, false);
+  $("freeScore").textContent = "";
+  $("freeLive").innerHTML = "Pulsa <b>Hablar</b> y di la frase.";
+  $("freeMicDot").classList.remove("live");
+  $("freeCoach").style.display = "none";
+}
+function freeTalk() {
+  const p = free.phrases[free.idx];
+  $("freeTalk").classList.add("listening");
+  $("freeMicDot").classList.add("live");
+  $("freeLive").textContent = "Escuchando…";
+  listenOnce({
+    onInterim: txt => {
+      $("freeLive").textContent = txt || "…";
+      renderKaraoke($("freeWords"), p, alignWords(tokens(p), tokens(txt), false), false);
+    },
+    onFinal: (txt, alts) => {
+      $("freeTalk").classList.remove("listening");
+      $("freeMicDot").classList.remove("live");
+      if (!txt && !alts.length) { $("freeLive").textContent = "No te escuché — inténtalo otra vez, más cerca del micrófono."; return; }
+      let best = scorePhrase(p, [], txt);
+      alts.forEach(a => { const s = scorePhrase(p, [], a); if (s.score > best.score) best = s; });
+      renderKaraoke($("freeWords"), p, best.statuses, false);
+      $("freeLive").textContent = txt || "(sin transcripción)";
+      const pct = Math.round(best.score * 100);
+      $("freeScore").textContent = pct + "%";
+      $("freeScore").style.color = pct >= 80 ? "var(--verde-vital)" : pct >= 50 ? "var(--ambar)" : "var(--rojo)";
+      renderCoach($("freeCoach"), p, best.statuses, best.score);
+      progress.phrases += 1;
+      awardLatidos(pct >= 80 ? 10 : pct >= 50 ? 5 : 2, true);
+      if (pct >= 80) toast(cheer());
+    }
+  });
+}
+$("freeStart").addEventListener("click", () => {
+  const phrases = splitPhrases($("freeText").value);
+  if (!phrases.length) { toast("Escribe o pega al menos una frase en español."); return; }
+  startFree($("freeTitle").value.trim() || "Mi práctica", phrases);
+});
+$("freeSaveList").addEventListener("click", () => {
+  const phrases = splitPhrases($("freeText").value);
+  if (!phrases.length) { toast("Escribe o pega al menos una frase primero."); return; }
+  const title = $("freeTitle").value.trim() || `Mi práctica ${scripts.length + 1}`;
+  scripts.unshift({ id: "s" + Date.now(), title, phrases });
+  saveAll();
+  toast(`«${title}» guardada en Mi práctica. 💗`);
+});
+$("freeTalk").addEventListener("click", () => activeRec ? stopListening() : freeTalk());
+$("freeListen").addEventListener("click", () => speak(free.phrases[free.idx]));
+$("freeNext").addEventListener("click", () => { free.idx = (free.idx + 1) % free.phrases.length; if (free.idx === 0) toast("¡Lista completa! Otra vuelta refuerza. 💪"); renderFreePhrase(); });
+$("freeEdit").addEventListener("click", () => {
+  $("freeText").value = free.phrases.join("\n");
+  $("freeTitle").value = free.title;
+  openFreeSetup();
+});
+
+// ============================================================
+// PROGRESS VIEW + BACKUP
+// ============================================================
+function renderProgress() {
+  rollDay();
+  $("pgStreak").textContent = progress.streak;
+  $("pgLatidos").textContent = progress.latidos;
+  $("pgMin").textContent = Math.round(progress.seconds / 60);
+  const goal = profile ? +profile.daily : 40;
+
+  // last-14-days chart
+  const days = [];
+  for (let i = 13; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push(dateKey(d)); }
+  const vals = days.map(k => progress.days[k] || 0);
+  const max = Math.max(goal, ...vals, 1);
+  $("chart14").innerHTML = days.map((k, i) => {
+    const v = vals[i];
+    const h = Math.max(3, Math.round(105 * v / max));
+    const met = v >= goal;
+    const dd = k.slice(8, 10);
+    return `<div class="cbar ${met ? "goalmet" : ""} ${k === todayKey() ? "today" : ""}" title="${k}: ${v} latidos">
+      <div class="fill" style="height:${h}px"></div><span class="lbl">${dd}</span></div>`;
+  }).join("");
+  const metDays = vals.filter(v => v >= goal).length;
+  $("chartNote").textContent = metDays
+    ? `Cumpliste tu meta de ${goal} latidos en ${metDays} de los últimos 14 días. ${metDays >= 10 ? "Eso ya es un hábito. 🌟" : metDays >= 5 ? "Se está volviendo costumbre. 💪" : "Cada día cuenta — hoy es buen día. 💗"}`
+    : `Tu meta es ${goal} latidos al día — unos 10 minutos. El primer día verde se siente increíble.`;
+
+  // per-sala bests
+  $("salaProg").innerHTML = allScenarios().map(s => {
+    const b = progress.best[s.id] || 0;
+    return `<div class="sala-row"><span class="s-t">${s.room ? "Sala " + s.room + " · " : ""}${s.title}</span>
+      <div class="s-bar"><div class="s-fill" style="width:${b}%"></div></div>
+      <span class="s-v">${b ? b + "%" : "—"}</span></div>`;
+  }).join("");
+
+  // her why
+  const GOALS = { rotaciones: "🏥 Para mis rotaciones y la clínica", osce: "📋 Para OSCEs y exámenes", comunidad: "❤️ Para mi comunidad", amor: "✨ Por amor al idioma" };
+  $("whyStory").textContent = profile && profile.story
+    ? `«${profile.story}»`
+    : "Escribiste tu meta al empezar — aquí viviría. (Puedes contárnosla de nuevo borrando tu perfil… o simplemente sigue practicando.)";
+  $("whyChips").innerHTML = profile ? [
+    `<span class="chip">${GOALS[profile.goal] || "💗 Aprender"}</span>`,
+    ...(profile.struggles || []).map(s => `<span class="chip">trabajando: ${STRUGGLE_LABELS[s] || s}</span>`)
+  ].join("") : "";
+
+  // history
+  $("histList").innerHTML = progress.history.length
+    ? progress.history.slice(0, 10).map(h => `<div class="hist-row"><span class="h-d">${h.d.slice(5)}</span><span>${h.title}</span><span class="h-acc" style="color:${h.acc >= 80 ? "var(--verde-vital)" : h.acc >= 50 ? "var(--ambar)" : "var(--rojo)"}">${h.acc}%</span></div>`).join("")
+    : `<p style="color:var(--tinta-suave); font-size:.88rem">Tu primer encuentro aparecerá aquí. Las salas te esperan. 🚪</p>`;
+}
+
+$("backupSave").addEventListener("click", () => {
+  const data = { app: "ClinicaBridge", v: 2, saved: todayKey(), profile, settings, progress, customScenarios, scripts };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  a.download = `clinicabridge_${norm(profile ? profile.name : "progreso").replace(/\s+/g, "_")}_${todayKey()}.json`;
+  a.click();
+  toast("💾 Copia guardada — mándatela por correo o guárdala donde quieras.");
+});
+$("backupLoad").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      if (d.app !== "ClinicaBridge" || !d.profile) throw 0;
+      profile = d.profile; settings = d.settings || settings; progress = d.progress || progress;
+      customScenarios = d.customScenarios || []; scripts = d.scripts || [];
+      if (profile) { profile.struggles = profile.struggles || []; profile.ntfy = profile.ntfy || { on: false, topic: "" }; }
+      progress.days = progress.days || {}; progress.history = progress.history || [];
+      saveAll();
+      renderProgress(); renderHeader();
+      toast(`¡Bienvenida de vuelta, ${displayName()}! Todo tu progreso está aquí. 💗`);
+      confetti(50);
+    } catch { toast("Ese archivo no parece una copia de ClínicaBridge."); }
+  };
+  r.readAsText(f);
+  e.target.value = "";
+});
 
 // ============================================================
 // SIM — the encounter
@@ -691,8 +1015,18 @@ function endSim() {
   const presPct = presence.on && presence.samples > 4 ? Math.round(100 * presence.facing / presence.samples) : null;
   const prevBest = progress.best[sim.sc.id] || 0;
   progress.best[sim.sc.id] = Math.max(prevBest, acc);
+  progress.history.unshift({ d: todayKey(), id: sim.sc.id, title: sim.sc.title, acc });
+  progress.history = progress.history.slice(0, 30);
   awardLatidos(15, true);
   saveAll();
+  const isRecord = acc > prevBest && prevBest > 0;
+  pushNtfy(
+    `Sala completada - ${sim.sc.title}`,
+    `🏥 ${profile ? profile.name : ""} terminó **${sim.sc.title}** con **${acc}%** de precisión` +
+    (isRecord ? ` — ¡nuevo récord personal! (antes ${prevBest}%) 🏆` : "") +
+    `. Racha: ${progress.streak} días · ${progress.today.latidos} latidos hoy.`,
+    isRecord ? "trophy" : "hospital"
+  );
 
   // stop capture
   stopCaptureKeepURL();
@@ -848,6 +1182,12 @@ $("bImport").addEventListener("change", e => {
 // ============================================================
 // SETTINGS
 // ============================================================
+function refreshNtfyRow() {
+  const on = !!(profile && profile.ntfy && profile.ntfy.on);
+  $("setNtfy").checked = on;
+  $("ntfyDetail").style.display = on ? "block" : "none";
+  if (on) $("setTopic").textContent = profile.ntfy.topic;
+}
 $("settingsBtn").addEventListener("click", () => {
   $("setDialect").value = settings.dialect;
   $("setRate").value = settings.rate;
@@ -855,9 +1195,19 @@ $("settingsBtn").addEventListener("click", () => {
   $("setCam").checked = settings.cam;
   $("setRec").checked = settings.rec;
   $("setReveal").checked = settings.reveal;
+  refreshNtfyRow();
   loadVoices();
   $("settingsModal").showModal();
 });
+$("setNtfy").addEventListener("change", () => {
+  if (!profile) { $("setNtfy").checked = false; return; }
+  profile.ntfy = profile.ntfy || { on: false, topic: "" };
+  profile.ntfy.on = $("setNtfy").checked;
+  if (profile.ntfy.on && !profile.ntfy.topic) profile.ntfy.topic = makeTopic();
+  saveAll();
+  refreshNtfyRow();
+});
+$("setNtfyTest").addEventListener("click", ntfyTest);
 $("settingsClose").addEventListener("click", () => {
   settings.dialect = $("setDialect").value;
   settings.voiceURI = $("setVoice").value;
@@ -874,10 +1224,10 @@ $("settingsClose").addEventListener("click", () => {
 // ============================================================
 // ONBOARDING
 // ============================================================
-const ob = { step: 1, name: "", title: null, goal: "", level: "", daily: "" };
+const ob = { step: 1, name: "", title: null, goal: "", story: "", struggles: [], level: "", daily: "", ntfyOn: false, topic: "" };
 function obShow(n) {
   ob.step = n;
-  [1, 2, 3, 4].forEach(i => $("ob" + i).classList.toggle("on", i === n));
+  [1, 2, 3, 4, 5, 6].forEach(i => $("ob" + i).classList.toggle("on", i === n));
   document.querySelectorAll(".ob-dot").forEach((d, i) => d.classList.toggle("on", i === n - 1));
 }
 function startOnboarding() {
@@ -892,6 +1242,7 @@ function wireChoices(containerId, cb) {
     cb(b.dataset.v);
   }));
 }
+// 1 — name + how patients address her
 wireChoices("obTitleChoices", v => { ob.title = v; });
 $("ob1Next").addEventListener("click", () => {
   const n = $("obName").value.trim();
@@ -902,26 +1253,55 @@ $("ob1Next").addEventListener("click", () => {
   obShow(2);
 });
 $("obName").addEventListener("keydown", e => { if (e.key === "Enter") $("ob1Next").click(); });
-wireChoices("obGoalChoices", v => { ob.goal = v; setTimeout(() => obShow(3), 250); });
-wireChoices("obLevelChoices", v => { ob.level = v; setTimeout(() => obShow(4), 250); });
-wireChoices("obDailyChoices", v => {
-  ob.daily = v;
-  profile = { name: ob.name, title: ob.title, goal: ob.goal, level: ob.level, daily: +v };
+// 2 — goal + her own words
+wireChoices("obGoalChoices", v => { ob.goal = v; });
+$("ob2Next").addEventListener("click", () => {
+  if (!ob.goal) { toast("Elige una — ¿para qué estás aprendiendo?"); return; }
+  ob.story = $("obStory").value.trim();
+  obShow(3);
+});
+// 3 — struggles (multi-select)
+$("obStruggleChoices").querySelectorAll(".ob-choice").forEach(b => b.addEventListener("click", () => {
+  b.classList.toggle("sel");
+  const v = b.dataset.v;
+  ob.struggles = b.classList.contains("sel") ? [...ob.struggles, v] : ob.struggles.filter(x => x !== v);
+}));
+$("ob3Next").addEventListener("click", () => obShow(4));
+// 4 — level, 5 — daily goal
+wireChoices("obLevelChoices", v => { ob.level = v; setTimeout(() => obShow(5), 250); });
+wireChoices("obDailyChoices", v => { ob.daily = v; setTimeout(() => obShow(6), 250); });
+// 6 — cheer channel
+$("obNtfyYes").addEventListener("click", () => {
+  ob.ntfyOn = true;
+  if (!ob.topic) ob.topic = makeTopic(ob.name);
+  $("obNtfyYes").classList.add("sel");
+  $("obNtfySkip").classList.remove("sel");
+  $("obTopic").textContent = ob.topic;
+  $("obTopicLink").href = "https://ntfy.sh/" + ob.topic;
+  $("obNtfyCard").style.display = "block";
+});
+$("obNtfyTest").addEventListener("click", () => ntfyTest(ob.topic, ob.name));
+$("obNtfySkip").addEventListener("click", () => { ob.ntfyOn = false; finishOnboarding(); });
+$("obFinish").addEventListener("click", finishOnboarding);
+function finishOnboarding() {
+  profile = {
+    name: ob.name, title: ob.title, goal: ob.goal, story: ob.story,
+    struggles: ob.struggles, level: ob.level, daily: +(ob.daily || 40),
+    ntfy: { on: ob.ntfyOn, topic: ob.ntfyOn ? ob.topic : "" }
+  };
   settings.reveal = ob.level === "semilla";
   saveAll();
-  setTimeout(() => {
-    $("onboard").classList.remove("active");
-    confetti(90);
-    const openers = {
-      rotaciones: "Tus pacientes de las salas te están esperando.",
-      osce: "Cada sala termina con tu informe estilo OSCE.",
-      comunidad: "Cada frase que aprendes es alguien que se sentirá escuchado.",
-      amor: "Pues vamos a hablarlo bonito."
-    };
-    toast(`¡Bienvenida a bordo, ${displayName()}! ${openers[ob.goal] || ""}`, 4200);
-    renderHome();
-  }, 350);
-});
+  $("onboard").classList.remove("active");
+  confetti(90);
+  const openers = {
+    rotaciones: "Tus pacientes de las salas te están esperando.",
+    osce: "Cada sala termina con tu informe estilo OSCE.",
+    comunidad: "Cada frase que aprendes es alguien que se sentirá escuchado.",
+    amor: "Pues vamos a hablarlo bonito."
+  };
+  toast(`¡Bienvenida a bordo, ${displayName()}! ${openers[ob.goal] || ""}`, 4200);
+  renderHome();
+}
 
 // ============================================================
 // KEYBOARD SHORTCUTS
@@ -932,15 +1312,19 @@ document.addEventListener("keydown", e => {
   if ($("onboard").classList.contains("active")) return;
   const inSim = $("view-sim").classList.contains("active") && $("debrief").style.display === "none";
   const inDrill = $("view-drill").classList.contains("active");
-  if (e.key === " " && (inSim || inDrill)) {
+  const inFree = $("view-free").classList.contains("active") && $("freeRun").style.display !== "none";
+  if (e.key === " " && (inSim || inDrill || inFree)) {
     e.preventDefault();
     if (inSim) (activeRec ? stopListening() : simTalk());
-    else (activeRec ? stopListening() : drillTalk());
+    else if (inDrill) (activeRec ? stopListening() : drillTalk());
+    else (activeRec ? stopListening() : freeTalk());
   } else if ((e.key === "l" || e.key === "L") && inSim) useListen();
   else if ((e.key === "l" || e.key === "L") && inDrill) $("drillListen").click();
+  else if ((e.key === "l" || e.key === "L") && inFree) $("freeListen").click();
   else if ((e.key === "h" || e.key === "H") && inSim) useHint();
   else if ((e.key === "n" || e.key === "N") && inSim) acceptStep();
   else if ((e.key === "n" || e.key === "N") && inDrill) $("drillNext").click();
+  else if ((e.key === "n" || e.key === "N") && inFree) $("freeNext").click();
   else if (e.key === "Escape" && $("view-sim").classList.contains("active")) show("home");
 });
 
@@ -957,4 +1341,5 @@ else {
   const [k, v] = h.split("=");
   if (k === "sim" && v) startSim(v);
   else if (k === "drill" && v) startDrill(v);
+  else if (k === "progress") show("progress");
 }

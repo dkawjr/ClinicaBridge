@@ -566,6 +566,20 @@ const DECKS = [
       { es: "el consentimiento", en: "consent form" }, { es: "el seguro médico", en: "health insurance" },
       { es: "el yeso", en: "cast" }, { es: "la muestra de orina", en: "urine sample" }
     ]
+  },
+  {
+    id: "numeros",
+    title: "Números, fechas y dosis",
+    en: "Numbers, dates & doses",
+    icon: "🔢",
+    cards: [
+      { es: "quince", en: "fifteen" }, { es: "treinta y nueve", en: "thirty-nine" },
+      { es: "ochenta", en: "eighty" }, { es: "ciento veinte", en: "one hundred twenty" },
+      { es: "la mitad de la pastilla", en: "half of the pill" }, { es: "quinientos miligramos", en: "500 milligrams" },
+      { es: "hace dos semanas", en: "two weeks ago" }, { es: "el año pasado", en: "last year" },
+      { es: "en ayunas, por la mañana", en: "fasting, in the morning" }, { es: "cada doce horas", en: "every twelve hours" },
+      { es: "tres veces por semana", en: "three times per week" }, { es: "durante diez días", en: "for ten days" }
+    ]
   }
 ];
 
