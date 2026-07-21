@@ -141,7 +141,8 @@ section.block { margin-top: clamp(36px, 6vh, 60px); }
 .door-tab .num { font-family: var(--mono); font-weight: 600; font-size: 1.05rem; color: #fff; }
 .door-tab .sala { font-family: var(--mono); font-size: .6rem; letter-spacing: .22em; writing-mode: vertical-rl; text-orientation: mixed; opacity: .75; }
 .door-tab .knob { width: 8px; height: 8px; border-radius: 50%; background: var(--rosa); }
-.door-body { flex: 1; padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 6px; }
+.door-body { flex: 1; padding: 16px 74px 14px 18px; display: flex; flex-direction: column; gap: 6px; position: relative; }
+.door-face { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 54px; pointer-events: none; }
 .door-body h3 { font-size: 1.12rem; font-weight: 800; font-variation-settings: "wdth" 110; color: var(--quirofano); }
 .door-body .en { font-size: .85rem; color: var(--tinta-suave); }
 .door-meta { display: flex; align-items: center; gap: 10px; margin-top: auto; padding-top: 10px; flex-wrap: wrap; }
@@ -218,17 +219,7 @@ section.block { margin-top: clamp(36px, 6vh, 60px); }
   background: var(--sim-carta); border: 1px solid var(--sim-linea); border-radius: var(--radius);
   padding: 20px; display: flex; flex-direction: column; gap: 14px; align-self: start;
 }
-.avatar-wrap { position: relative; width: 88px; height: 88px; margin: 0 auto; }
-.avatar {
-  width: 88px; height: 88px; border-radius: 50%;
-  display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--quirofano-2), var(--quirofano));
-  color: #fff; font-weight: 800; font-size: 1.7rem; font-variation-settings: "wdth" 118;
-  border: 2px solid var(--sim-linea);
-}
-.avatar-wrap .ring { position: absolute; inset: -6px; border-radius: 50%; border: 2px solid var(--rosa); opacity: 0; }
-.speaking .ring { animation: ring 1.3s ease-out infinite; }
-@keyframes ring { 0% { transform: scale(.85); opacity: .8; } 100% { transform: scale(1.25); opacity: 0; } }
+.avatar-wrap { position: relative; width: 158px; margin: 0 auto; }
 .patient-name { text-align: center; }
 .patient-name b { font-size: 1.1rem; font-weight: 800; }
 .patient-name .age { font-family: var(--mono); font-size: .75rem; color: var(--sim-texto-suave); display: block; margin-top: 2px; }
@@ -398,6 +389,43 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
 .switch input:checked + .track { background: var(--rosa); }
 .switch input:checked + .track::after { transform: translateX(20px); }
 
+/* ---------- retratos (humanoid patients) ---------- */
+.retrato { display: block; width: 100%; height: auto; }
+.av-live .av-body { animation: avBreath 4.2s ease-in-out infinite; }
+.av-live .av-head { animation: avSway 7.5s ease-in-out infinite alternate; transform-origin: 160px 232px; }
+.av-static .av-body, .av-static .av-head { animation: none; }
+@keyframes avBreath { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2.6px); } }
+@keyframes avSway { 0% { transform: rotate(-1.1deg); } 100% { transform: rotate(1.1deg); } }
+@media (prefers-reduced-motion: reduce) { .av-live .av-body, .av-live .av-head { animation: none; } }
+.av-lid { transition: transform .09s ease; }
+.av-brow { transition: transform .4s ease; }
+.av-gaze { transition: transform .45s ease; }
+.av-blushL, .av-blushR { transition: opacity .5s ease; }
+.av-speaking { filter: drop-shadow(0 0 16px rgba(228, 0, 124, .30)); }
+/* visemes: only the active mouth shape is visible */
+.av-mouth > * { opacity: 0; transition: opacity .05s linear; }
+.av-mouth[data-viseme="closed"] .m-closed { opacity: 1; }
+.av-mouth[data-viseme="smile"]  .m-smile  { opacity: 1; }
+.av-mouth[data-viseme="frown"]  .m-frown  { opacity: 1; }
+.av-mouth[data-viseme="grim"]   .m-grim   { opacity: 1; }
+.av-mouth[data-viseme="small"]  .m-small  { opacity: 1; }
+.av-mouth[data-viseme="mid"]    .m-mid    { opacity: 1; }
+.av-mouth[data-viseme="wide"]   .m-wide   { opacity: 1; }
+.av-mouth[data-viseme="oh"]     .m-oh     { opacity: 1; }
+/* emotional states */
+.mood-pain .av-browL { transform: rotate(12deg) translateY(3px) translateX(3px); }
+.mood-pain .av-browR { transform: rotate(-12deg) translateY(3px) translateX(-3px); }
+.mood-worried .av-browL { transform: rotate(-8deg) translateY(-2px); }
+.mood-worried .av-browR { transform: rotate(8deg) translateY(-2px); }
+.mood-sad .av-browL { transform: rotate(-10deg) translateY(-1px); }
+.mood-sad .av-browR { transform: rotate(10deg) translateY(-1px); }
+.mood-sad .av-gaze { transform: translateY(2.6px); }
+.mood-scared .av-browL, .mood-scared .av-browR { transform: translateY(-5.5px); }
+.mood-scared .av-eyeL, .mood-scared .av-eyeR { transform: scale(1.07); }
+.mood-relieved .av-browL, .mood-relieved .av-browR { transform: translateY(-1.5px); }
+.mood-happy .av-browL, .mood-happy .av-browR { transform: translateY(-2px); }
+.mood-happy .av-blushL, .mood-happy .av-blushR, .mood-relieved .av-blushL, .mood-relieved .av-blushR { opacity: .38 !important; }
+
 /* ---------- tu plan de hoy ---------- */
 .plan-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
 .plan-item {
@@ -511,9 +539,8 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
 }
 @media (max-width: 860px) {
   .sim-inner { padding-bottom: 14px; }
-  .patient-card { display: grid; grid-template-columns: 64px 1fr; gap: 8px 14px; align-items: center; padding: 14px; }
-  .avatar-wrap, .avatar { width: 56px; height: 56px; }
-  .avatar { font-size: 1.15rem; }
+  .patient-card { display: grid; grid-template-columns: 84px 1fr; gap: 8px 14px; align-items: center; padding: 14px; }
+  .avatar-wrap { width: 84px; margin: 0; }
   .patient-name { text-align: left; }
   .patient-name b { font-size: .98rem; }
   .persona { display: none; }
@@ -958,10 +985,7 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
 
       <div class="sim-stage" id="simStage">
         <div class="patient-card">
-          <div class="avatar-wrap" id="avatarWrap">
-            <div class="avatar" id="avatarInitials"></div>
-            <div class="ring"></div>
-          </div>
+          <div class="avatar-wrap" id="avatarWrap"></div>
           <div class="patient-name"><b id="pName"></b><span class="age" id="pAge"></span></div>
           <p class="persona" id="pPersona"></p>
           <div class="subtitle-box">
@@ -1076,6 +1100,7 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
 <div id="toast" role="status"></div>
 
 <script src="data.js"></script>
+<script src="avatars.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

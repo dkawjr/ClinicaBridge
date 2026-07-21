@@ -583,6 +583,16 @@ const DECKS = [
   }
 ];
 
+// per-step emotional arc for each patient (drives the animated portraits)
+const SCENARIO_MOODS = {
+  sala1: ["pain", "pain", "pain", "worried", "worried", "neutral", "scared", "relieved"],
+  sala2: ["worried", "worried", "worried", "neutral", "neutral", "worried", "neutral", "relieved"],
+  sala3: ["happy", "neutral", "worried", "relieved", "worried", "neutral", "happy", "happy"],
+  sala4: ["neutral", "worried", "neutral", "worried", "scared", "sad", "neutral", "happy"],
+  sala5: ["scared", "worried", "relieved", "worried", "neutral", "worried", "worried", "relieved"],
+  sala6: ["sad", "sad", "sad", "sad", "sad", "sad", "neutral", "relieved"]
+};
+
 const PRONUN_TIPS = [
   "La «rr» se vibra con la punta de la lengua: pe-rro, no pe-ro. Practica con «el carro corre rápido».",
   "La «j» suena como la «h» inglesa fuerte: ojo, bajo, mejor.",

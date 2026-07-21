@@ -358,16 +358,23 @@ function renderHome() {
     SCENARIOS.map(sc => doorHTML(sc, false)).join("") +
     customScenarios.map(sc => doorHTML(sc, true)).join("") +
     `<button class="door new-door" id="newDoor">＋ &nbsp;Crea tu propia sala</button>`;
-  rg.querySelectorAll(".door[data-sc]").forEach(d => d.addEventListener("click", e => {
-    const del = e.target.closest("[data-del]");
-    if (del) {
-      e.stopPropagation();
-      customScenarios = customScenarios.filter(s => s.id !== del.dataset.del);
-      saveAll(); renderHome(); toast("Sala borrada.");
-      return;
-    }
-    startSim(d.dataset.sc);
-  }));
+  rg.querySelectorAll(".door[data-sc]").forEach(d => {
+    d.addEventListener("click", e => {
+      const del = e.target.closest("[data-del]");
+      if (del) {
+        e.stopPropagation();
+        customScenarios = customScenarios.filter(s => s.id !== del.dataset.del);
+        saveAll(); renderHome(); toast("Sala borrada.");
+        return;
+      }
+      startSim(d.dataset.sc);
+    });
+    // static portrait on each door
+    const face = document.createElement("span");
+    face.className = "door-face";
+    d.querySelector(".door-body").appendChild(face);
+    createAvatar(face, d.dataset.sc, { staticPose: true });
+  });
   $("newDoor").addEventListener("click", () => { openBuilder(); show("builder"); });
 
   // drills
@@ -807,7 +814,8 @@ async function startSim(scId) {
   $("pName").textContent = pat.name;
   $("pAge").textContent = pat.age ? `${pat.age} años` : "";
   $("pPersona").textContent = pat.persona || "";
-  $("avatarInitials").textContent = (pat.name || "P").replace(/^(Sr\.|Sra\.|Srta\.)\s*/i, "").slice(0, 1).toUpperCase();
+  if (sim.av) sim.av.destroy();
+  sim.av = createAvatar($("avatarWrap"), sc.id);
 
   // timer
   clearInterval(simTimerH);
@@ -909,7 +917,11 @@ async function runStep() {
 }
 
 async function patientSay(es, en) {
-  $("avatarWrap").parentElement.classList.add("speaking");
+  const arc = SCENARIO_MOODS[sim.sc.id];
+  if (sim.av) {
+    sim.av.setMood((arc && arc[sim.i]) || (currentStep() && currentStep().mood) || "neutral");
+    sim.av.speak(true);
+  }
   $("pSubEn").textContent = settings.showEn ? (en || "") : "";
   // typewriter subtitle in sync-ish with speech
   const el = $("pSubEs"); el.textContent = "";
@@ -921,7 +933,7 @@ async function patientSay(es, en) {
   }
   const v = (sim.sc.patient && sim.sc.patient.voice) || {};
   await speak(es, { pitch: v.pitch || 1, rate: v.rate || 1 });
-  $("avatarWrap").parentElement.classList.remove("speaking");
+  if (sim && sim.av) sim.av.speak(false);
 }
 
 function renderStepDots() {
@@ -1076,6 +1088,7 @@ function stopCaptureKeepURL() {
 
 function teardownSim() {
   clearInterval(simTimerH);
+  if (sim && sim.av) { sim.av.destroy(); sim.av = null; }
   if (presence.timer) { clearInterval(presence.timer); presence.timer = null; }
   presence.detector = null; // keep faceDetectorCache for the next encounter
   if (recorder && recorder.state !== "inactive") { try { recorder.stop(); } catch {} }
