@@ -1,9 +1,22 @@
 # ClínicaBridge 🫀
 
-**Clinical Spanish, cara a cara.** A camera-and-voice learning app for med students:
-a virtual patient speaks to you in Spanish, you answer **out loud, on camera**, and every
-word you say lights up in real time — green (perfect), amber (close), red (missed).
+**Clinical Spanish, cara a cara.** → **Live: https://dkawjr.github.io/ClinicaBridge/**
+
+A camera-and-voice learning app for med students: a **humanoid virtual patient** — six
+hand-drawn animated portraits that breathe, blink, lip-sync while they speak, and move
+through real emotional arcs (pain, worry, fear, relief) — talks to you in Spanish; you
+answer **out loud, on camera**, and every word you say lights up in real time — green
+(perfect), amber (close), red (missed).
 Sister app to [SignBridge](https://github.com/dkawjr) and [PsychBridge](https://dkawjr.github.io/PsychBridge/).
+
+- **Instructions in your language**: a 🌐 ES/EN toggle (first onboarding screen, header,
+  Settings) switches every instruction, prompt, and coaching message to English for
+  zero-Spanish beginners — the Spanish you're *learning* stays Spanish.
+- **Natural voices**: the app ranks every Spanish voice installed in your browser and
+  auto-picks the most natural (Microsoft Edge's neural voices sound best; Chrome's Google
+  voices are next), matched to dialect and patient gender. Preview and override in Settings.
+- **Audited hard**: a 10-agent review pass (visual, code, animation, Spanish/clinical
+  content, accessibility, platform robustness) with every finding fixed and re-verified.
 
 ## What's inside
 
