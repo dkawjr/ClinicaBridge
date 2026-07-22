@@ -27,7 +27,9 @@
   --rosa: #E4007C;          /* rosa mexicano — brand accent */
   --rosa-tinta: #B00061;    /* darker rosa for text on light bg (contrast) */
   --rosa-suave: #FCE8F2;
-  --verde-vital: #178A5C;   /* correct */
+  --verde-vital: #178A5C;   /* correct (large text / dark bg) */
+  --verde-tinta: #0E6B45;   /* correct, AA on white at small sizes */
+  --ambar-tinta: #8A5E00;   /* close, AA on white at small sizes */
   --verde-suave: #E2F4EB;
   --ambar: #A87400;         /* close */
   --ambar-suave: #FBF1D9;
@@ -95,10 +97,11 @@ header.app-header {
 }
 .chip strong { color: var(--tinta); font-weight: 600; }
 .icon-btn {
-  display: grid; place-items: center; width: 38px; height: 38px;
-  border-radius: 10px; border: 1px solid var(--linea); background: var(--carta);
+  display: grid; place-items: center; width: 44px; height: 44px;
+  border-radius: 12px; border: 1px solid var(--linea); background: var(--carta);
   font-size: 1.05rem; transition: transform .15s ease, border-color .15s ease;
 }
+button.chip { cursor: pointer; min-height: 40px; }
 .icon-btn:hover { transform: translateY(-1px); border-color: var(--rosa); }
 
 /* ---------- views ---------- */
@@ -150,7 +153,14 @@ section.block { margin-top: clamp(36px, 6vh, 60px); }
 .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--linea); }
 .pip.on { background: var(--rosa); }
 .best { font-family: var(--mono); font-size: .72rem; color: var(--tinta-suave); }
-.best strong { color: var(--verde-vital); font-weight: 600; }
+.best strong { color: var(--verde-tinta); font-weight: 600; }
+.door-holder { position: relative; display: flex; }
+.door-holder .door { flex: 1; min-width: 0; }
+.door-holder .del-x {
+  position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border-radius: 9px;
+  border: none; background: transparent; color: var(--tinta-suave); font-size: 1rem; display: grid; place-items: center;
+}
+.door-holder .del-x:hover, .door-holder .del-x:focus-visible { background: var(--rojo-suave); color: var(--rojo); }
 .door.custom-door .door-tab { background: var(--rosa); color: #FBD5E8; }
 .door.custom-door .door-tab .knob { background: var(--quirofano); }
 .door.new-door { border-style: dashed; background: transparent; box-shadow: none; align-items: center; justify-content: center; min-height: 130px; gap: 10px; color: var(--tinta-suave); font-weight: 600; }
@@ -234,6 +244,7 @@ section.block { margin-top: clamp(36px, 6vh, 60px); }
 .mini-btn {
   font-family: var(--mono); font-size: .72rem; padding: 6px 12px; border-radius: 8px;
   background: transparent; border: 1px solid var(--sim-linea); color: var(--sim-texto-suave);
+  min-height: 40px;
 }
 .mini-btn:hover { border-color: var(--rosa); color: var(--sim-texto); }
 
@@ -265,9 +276,10 @@ video#cam {
 .k-words { display: flex; flex-wrap: wrap; gap: 10px 12px; font-size: clamp(1.25rem, 2.6vw, 1.7rem); font-weight: 700; font-variation-settings: "wdth" 106; line-height: 1.3; }
 .k-word { position: relative; padding-bottom: 5px; border-bottom: 3px solid var(--sim-linea); color: var(--sim-texto-suave); transition: color .2s, border-color .2s; }
 .k-word.hidden-word { color: transparent; text-shadow: 0 0 14px rgba(233,242,238,.55); border-bottom-style: dotted; user-select: none; }
-.k-word.hit { color: #fff; border-color: var(--verde-vital); text-shadow: none; }
-.k-word.close { color: #F4D588; border-color: var(--ambar); text-shadow: none; }
-.k-word.miss { color: #F3A6A6; border-color: var(--rojo); text-shadow: none; }
+/* status is never color-alone: hit = solid, close = double, miss = dotted underline */
+.k-word.hit { color: #fff; border-color: var(--verde-vital); border-bottom-style: solid; text-shadow: none; }
+.k-word.close { color: #F4D588; border-color: var(--ambar); border-bottom-style: double; text-shadow: none; }
+.k-word.miss { color: #F3A6A6; border-color: var(--rojo); border-bottom-style: dotted; text-shadow: none; }
 .k-en { margin-top: 12px; font-size: .85rem; color: var(--sim-texto-suave); }
 .live-line {
   margin-top: 14px; min-height: 26px; font-family: var(--mono); font-size: .85rem; color: var(--sim-texto-suave);
@@ -373,6 +385,7 @@ input.f-in:focus, textarea.f-in:focus, select.f-in:focus { outline: 2px solid va
 /* ---------- modal (settings) ---------- */
 dialog {
   border: none; border-radius: 18px; padding: 0; max-width: 520px; width: 92vw;
+  margin: auto; /* the * reset kills the UA's modal centering — restore it */
   box-shadow: var(--shadow-lift);
 }
 dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
@@ -401,10 +414,15 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
 .av-brow { transition: transform .4s ease; }
 .av-gaze { transition: transform .45s ease; }
 .av-blushL, .av-blushR { transition: opacity .5s ease; }
-.av-speaking { filter: drop-shadow(0 0 16px rgba(228, 0, 124, .30)); }
+/* speaking indicator: a cheap stroked halo (a filter here would re-rasterize
+   the whole animating portrait every frame and jank mid-range phones) */
+.av-halo { transition: opacity .35s ease; }
+.av-speaking .av-halo { opacity: .55 !important; }
+.mood-shift .av-lid { transition: transform .35s ease; }
 /* visemes: only the active mouth shape is visible */
 .av-mouth > * { opacity: 0; transition: opacity .05s linear; }
 .av-mouth[data-viseme="closed"] .m-closed { opacity: 1; }
+.av-mouth[data-viseme="press"]  .m-press  { opacity: 1; }
 .av-mouth[data-viseme="smile"]  .m-smile  { opacity: 1; }
 .av-mouth[data-viseme="frown"]  .m-frown  { opacity: 1; }
 .av-mouth[data-viseme="grim"]   .m-grim   { opacity: 1; }
@@ -412,9 +430,10 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
 .av-mouth[data-viseme="mid"]    .m-mid    { opacity: 1; }
 .av-mouth[data-viseme="wide"]   .m-wide   { opacity: 1; }
 .av-mouth[data-viseme="oh"]     .m-oh     { opacity: 1; }
-/* emotional states */
-.mood-pain .av-browL { transform: rotate(12deg) translateY(3px) translateX(3px); }
-.mood-pain .av-browR { transform: rotate(-12deg) translateY(3px) translateX(-3px); }
+/* emotional states — pain lifts the INNER brow ends (distress), it does not
+   knit them down (that reads as anger) */
+.mood-pain .av-browL { transform: rotate(-13deg) translateY(1px); }
+.mood-pain .av-browR { transform: rotate(13deg) translateY(1px); }
 .mood-worried .av-browL { transform: rotate(-8deg) translateY(-2px); }
 .mood-worried .av-browR { transform: rotate(8deg) translateY(-2px); }
 .mood-sad .av-browL { transform: rotate(-10deg) translateY(-1px); }
@@ -424,7 +443,7 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
 .mood-scared .av-eyeL, .mood-scared .av-eyeR { transform: scale(1.07); }
 .mood-relieved .av-browL, .mood-relieved .av-browR { transform: translateY(-1.5px); }
 .mood-happy .av-browL, .mood-happy .av-browR { transform: translateY(-2px); }
-.mood-happy .av-blushL, .mood-happy .av-blushR, .mood-relieved .av-blushL, .mood-relieved .av-blushR { opacity: .38 !important; }
+.mood-happy .av-blushL, .mood-happy .av-blushR, .mood-relieved .av-blushL, .mood-relieved .av-blushR { opacity: var(--bh, .3) !important; }
 
 /* ---------- tu plan de hoy ---------- */
 .plan-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
@@ -514,11 +533,6 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
 .free-title-row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 
 /* ---------- mobile polish: equal beauty on phones ---------- */
-@media (max-width: 430px) {
-  .tiles { grid-template-columns: 1fr; }
-  .prog-hero { grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
-  .big-stat { padding: 14px 6px; }
-}
 @media (max-width: 700px) {
   header.app-header { padding: 10px 12px; gap: 8px; }
   .block-head { flex-direction: column; align-items: flex-start; gap: 3px; }
@@ -559,6 +573,12 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
   .hud-right { gap: 7px; }
   .sim-hud .sim-title { font-size: .9rem; }
 }
+/* narrow-phone overrides — MUST come after the wider breakpoints to win the cascade */
+@media (max-width: 430px) {
+  .tiles { grid-template-columns: 1fr; }
+  .prog-hero { grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .big-stat { padding: 14px 6px; }
+}
 
 /* ---------- onboarding (first run) ---------- */
 #onboard {
@@ -596,6 +616,13 @@ dialog::backdrop { background: rgba(8,20,17,.55); backdrop-filter: blur(3px); }
 .ob-choice.sel { border-color: var(--rosa); background: rgba(228,0,124,.18); }
 .ob-next { margin-top: 28px; width: 100%; font-size: 1.05rem; padding: 15px; }
 .ob-dots { display: flex; gap: 8px; justify-content: center; margin-top: 30px; }
+.lang-pills { display: flex; gap: 8px; justify-content: center; margin-bottom: 26px; flex-wrap: wrap; }
+.lang-pill {
+  padding: 9px 16px; border-radius: 999px; border: 1.5px solid rgba(255,255,255,.35);
+  background: transparent; color: #CFE5DE; font-weight: 600; font-size: .85rem; min-height: 40px;
+}
+.lang-pill[aria-pressed="true"] { background: var(--rosa); border-color: var(--rosa); color: #fff; }
+.lang-pill:hover { border-color: #fff; }
 .ob-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.25); transition: background .2s, transform .2s; }
 .ob-dot.on { background: var(--rosa); transform: scale(1.25); }
 
@@ -636,6 +663,7 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
 
 <header class="app-header">
   <button class="wordmark" id="homeBtn" title="Inicio"><span class="clin">Cl&iacute;nica</span><span class="bridge">Bridge</span></button>
+  <button class="chip" id="langBtn" title="Cambiar idioma de las instrucciones / Switch instruction language" aria-label="Switch instruction language">🌐 <strong id="langBtnLabel">EN</strong></button>
   <span class="chip" id="chipStreak" title="Racha — d&iacute;as seguidos cumpliendo tu meta">🔥 <strong id="streakN">0</strong></span>
   <div class="header-spacer"></div>
   <span class="chip goal-chip" id="chipGoal" title="Latidos de hoy / tu meta diaria">
@@ -651,11 +679,15 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
 <!-- ================= ONBOARDING (first run) ================= -->
 <div id="onboard">
   <div class="ob-inner"><div class="ob-card">
+    <div class="lang-pills" role="group" aria-label="Idioma de las instrucciones / Instruction language">
+      <button class="lang-pill" id="obLangEs" aria-pressed="true">Instrucciones en espa&ntilde;ol</button>
+      <button class="lang-pill" id="obLangEn" aria-pressed="false" lang="en">English instructions</button>
+    </div>
     <span class="mascot" aria-hidden="true">🫀</span>
 
     <div class="ob-step" id="ob1">
-      <h2>Bienvenida a <span style="color:#CFE5DE">Cl&iacute;nica</span><span class="rosa">Bridge</span>.<br>&iquest;C&oacute;mo te llamas?</h2>
-      <p class="ob-sub">Your patients are waiting to meet you.</p>
+      <h2 id="obH1">Te damos la bienvenida a <span style="color:#CFE5DE">Cl&iacute;nica</span><span class="rosa">Bridge</span>.<br>&iquest;C&oacute;mo te llamas?</h2>
+      <p class="ob-sub" id="obS1" lang="en">Welcome! Your patients are waiting to meet you — what's your name?</p>
       <input class="ob-input" id="obName" placeholder="Tu nombre…" maxlength="30" autocomplete="off">
       <div class="ob-choices cols2" id="obTitleChoices" style="margin-top:16px">
         <button class="ob-choice" data-v="Doctora">Doctora<small>patients call you Doctora</small></button>
@@ -667,8 +699,8 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
     </div>
 
     <div class="ob-step" id="ob2">
-      <h2>&iquest;Para qu&eacute; est&aacute;s aprendiendo, <span class="rosa" id="obNameEcho"></span>?</h2>
-      <p class="ob-sub">We'll cheer for the right things.</p>
+      <h2 id="obH2">&iquest;Para qu&eacute; est&aacute;s aprendiendo, <span class="rosa" id="obNameEcho"></span>?</h2>
+      <p class="ob-sub" id="obS2" lang="en">What are you learning Spanish for? We'll cheer for the right things.</p>
       <div class="ob-choices" id="obGoalChoices">
         <button class="ob-choice" data-v="rotaciones">🏥 Mis rotaciones y la cl&iacute;nica<small>talk to real patients on the wards</small></button>
         <button class="ob-choice" data-v="osce">📋 OSCEs y ex&aacute;menes<small>structured encounters, graded</small></button>
@@ -681,8 +713,8 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
     </div>
 
     <div class="ob-step" id="ob3">
-      <h2>&iquest;Qu&eacute; se te hace <span class="rosa">dif&iacute;cil</span>?</h2>
-      <p class="ob-sub">Pick everything that's true — your daily plan will focus on it. (You can pick none.)</p>
+      <h2 id="obH3">&iquest;Qu&eacute; se te hace <span class="rosa">dif&iacute;cil</span>?</h2>
+      <p class="ob-sub" id="obS3" lang="en">What's hard for you? Pick everything that's true — your daily plan will focus on it. (You can pick none.)</p>
       <div class="ob-choices cols2" id="obStruggleChoices">
         <button class="ob-choice" data-v="pron">🌀 La pronunciaci&oacute;n<small>rr, j, &ntilde;, ll…</small></button>
         <button class="ob-choice" data-v="listen">👂 Entenderles<small>when patients speak fast</small></button>
@@ -695,8 +727,8 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
     </div>
 
     <div class="ob-step" id="ob4">
-      <h2>&iquest;C&oacute;mo est&aacute; tu espa&ntilde;ol cl&iacute;nico hoy?</h2>
-      <p class="ob-sub">Honest answer — it only sets your starting difficulty.</p>
+      <h2 id="obH4">&iquest;C&oacute;mo est&aacute; tu espa&ntilde;ol cl&iacute;nico hoy?</h2>
+      <p class="ob-sub" id="obS4" lang="en">How's your clinical Spanish today? Honest answer — it only sets your starting difficulty.</p>
       <div class="ob-choices" id="obLevelChoices">
         <button class="ob-choice" data-v="semilla">🌱 Semilla<small>I know hola and gracias — show me the words</small></button>
         <button class="ob-choice" data-v="brote">🌿 Brote<small>I can ask questions but I freeze — hide words, give hints</small></button>
@@ -705,8 +737,8 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
     </div>
 
     <div class="ob-step" id="ob5">
-      <h2>Tu meta diaria de <span class="rosa">latidos</span> 💗</h2>
-      <p class="ob-sub">Latidos are heartbeats — you earn them for every phrase you say well. A streak day = hitting your goal.</p>
+      <h2 id="obH5">Tu meta diaria de <span class="rosa">latidos</span> 💗</h2>
+      <p class="ob-sub" id="obS5" lang="en">Your daily goal. Latidos are heartbeats — you earn them for every phrase you say well. A streak day = hitting your goal.</p>
       <div class="ob-choices" id="obDailyChoices">
         <button class="ob-choice" data-v="20">Tranquilo · 20 latidos<small>&approx; 5 min al d&iacute;a</small></button>
         <button class="ob-choice" data-v="40">Constante · 40 latidos<small>&approx; 10 min al d&iacute;a</small></button>
@@ -715,8 +747,8 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
     </div>
 
     <div class="ob-step" id="ob6">
-      <h2>&iquest;Porras en tu <span class="rosa">tel&eacute;fono</span>? 📣</h2>
-      <p class="ob-sub">Your private cheer channel: get a sweet push when you hit your goal or set a record.
+      <h2 id="obH6">&iquest;Porras en tu <span class="rosa">tel&eacute;fono</span>? 📣</h2>
+      <p class="ob-sub" id="obS6" lang="en">Cheers on your phone? A private channel: get a sweet push when you hit your goal or set a record.
       Share it with a study buddy so they can cheer too. No account, no email — pinky promise.</p>
       <div class="ob-choices">
         <button class="ob-choice" id="obNtfyYes">💗 S&iacute;, act&iacute;valas<small>takes 1 minute, one free app</small></button>
@@ -752,7 +784,7 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
       <div class="hero">
         <p class="eyebrow" id="heroGreet">Clinical Spanish · con c&aacute;mara y voz</p>
         <h1 class="display" id="heroTitle"><span class="es">Habla con tus pacientes,</span> <span class="accent">no sobre ellos.</span></h1>
-        <p class="sub">Step into an exam room. A virtual patient speaks to you in Spanish — you answer out loud, on camera,
+        <p class="sub" lang="en">Step into an exam room. A virtual patient speaks to you in Spanish — you answer out loud, on camera,
         and every word you say lights up as you say it. Built for med students, by med students.</p>
         <div class="stats">
           <span class="chip">⏱️ <strong id="statMin">0</strong>&nbsp;min practicados</span>
@@ -819,13 +851,13 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
       <div class="drill-card">
         <div class="k-label"><span>D&Iacute; ESTA FRASE · SAY THIS</span><span id="drillSetName"></span></div>
         <div class="drill-words" id="drillWords"></div>
-        <p class="drill-en" id="drillEn"></p>
-        <div class="drill-live"><span class="mic-dot" id="drillMicDot"></span><span id="drillLive">Pulsa <b>Hablar</b> y di la frase.</span></div>
+        <p class="drill-en" id="drillEn" lang="en"></p>
+        <div class="drill-live"><span class="mic-dot" id="drillMicDot"></span><span id="drillLive" aria-live="polite">Pulsa <b>Hablar</b> y di la frase.</span></div>
         <div class="drill-actions">
           <button class="btn btn-rosa talk-btn" id="drillTalk">🎤 Hablar <span class="kbd">Space</span></button>
           <button class="btn btn-ghost" id="drillListen">🔊 Escuchar <span class="kbd">L</span></button>
           <button class="btn btn-ghost" id="drillNext">Siguiente → <span class="kbd">N</span></button>
-          <span class="score-dial" id="drillScore"></span>
+          <span class="score-dial" id="drillScore" aria-live="polite"></span>
         </div>
         <div class="tip-box" id="drillTip" style="display:none"></div>
       </div>
@@ -865,30 +897,30 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
       </div>
 
       <div class="prog-card">
-        <h3>Tus &uacute;ltimos 14 d&iacute;as <small>verde = meta cumplida</small></h3>
+        <h3 id="pgH1">Tus &uacute;ltimos 14 d&iacute;as <small>verde = meta cumplida</small></h3>
         <div class="chart" id="chart14"></div>
         <p class="chart-note" id="chartNote"></p>
       </div>
 
       <div class="prog-card">
-        <h3>Las salas <small>tu mejor puntaje en cada una</small></h3>
+        <h3 id="pgH2">Las salas <small>tu mejor puntaje en cada una</small></h3>
         <div id="salaProg"></div>
       </div>
 
       <div class="prog-card why-card">
-        <h3>Tu porqu&eacute; 💌</h3>
+        <h3 id="pgH3">Tu porqu&eacute; 💌</h3>
         <p class="story" id="whyStory"></p>
         <div class="why-chips" id="whyChips"></div>
       </div>
 
       <div class="prog-card">
-        <h3>&Uacute;ltimos encuentros</h3>
+        <h3 id="pgH4">&Uacute;ltimos encuentros</h3>
         <div id="histList"></div>
       </div>
 
       <div class="prog-card">
-        <h3>Guarda tu progreso <small>no account needed — it lives in this browser</small></h3>
-        <p style="font-size:.86rem; color:var(--tinta-suave)">Download a little file with everything (your name, plan, streak, records, custom rooms).
+        <h3 id="pgH5">Guarda tu progreso <small lang="en">no account needed — it lives in this browser</small></h3>
+        <p style="font-size:.86rem; color:var(--tinta-suave)" lang="en">Download a little file with everything (your name, plan, streak, records, custom rooms).
         Open ClinicaBridge on another device and bring it back — nothing gets lost.</p>
         <div class="backup-row">
           <button class="btn btn-verde" id="backupSave">💾 Guardar una copia</button>
@@ -930,13 +962,13 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
         <div class="drill-card">
           <div class="k-label"><span>D&Iacute; ESTA FRASE · SAY THIS</span><span>TU PR&Aacute;CTICA</span></div>
           <div class="drill-words" id="freeWords"></div>
-          <div class="drill-live"><span class="mic-dot" id="freeMicDot"></span><span id="freeLive">Pulsa <b>Hablar</b> y di la frase.</span></div>
+          <div class="drill-live"><span class="mic-dot" id="freeMicDot"></span><span id="freeLive" aria-live="polite">Pulsa <b>Hablar</b> y di la frase.</span></div>
           <div class="drill-actions">
             <button class="btn btn-rosa talk-btn" id="freeTalk">🎤 Hablar <span class="kbd">Space</span></button>
             <button class="btn btn-ghost" id="freeListen">🔊 Escuchar <span class="kbd">L</span></button>
             <button class="btn btn-ghost" id="freeNext">Siguiente → <span class="kbd">N</span></button>
             <button class="btn btn-ghost" id="freeEdit">✏️ Editar texto</button>
-            <span class="score-dial" id="freeScore"></span>
+            <span class="score-dial" id="freeScore" aria-live="polite"></span>
           </div>
           <div class="coach-box" id="freeCoach" style="display:none"></div>
         </div>
@@ -989,8 +1021,8 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
           <div class="patient-name"><b id="pName"></b><span class="age" id="pAge"></span></div>
           <p class="persona" id="pPersona"></p>
           <div class="subtitle-box">
-            <p class="subtitle-es" id="pSubEs"></p>
-            <p class="subtitle-en" id="pSubEn"></p>
+            <p class="subtitle-es" id="pSubEs" aria-live="polite" aria-atomic="true"></p>
+            <p class="subtitle-en" id="pSubEn" lang="en"></p>
           </div>
           <div class="patient-actions">
             <button class="mini-btn" id="pReplay">↻ repetir</button>
@@ -1009,15 +1041,15 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
           <div class="karaoke">
             <div class="k-label"><span>TU FRASE OBJETIVO</span><span id="kHintState">palabras ocultas — se revelan al decirlas</span></div>
             <div class="k-words" id="kWords"></div>
-            <p class="k-en" id="kEn"></p>
-            <div class="live-line"><span class="mic-dot" id="micDot"></span><span id="liveTx">Pulsa <b>Hablar</b> cuando est&eacute;s listo.</span></div>
+            <p class="k-en" id="kEn" lang="en"></p>
+            <div class="live-line"><span class="mic-dot" id="micDot"></span><span id="liveTx" aria-live="polite">Pulsa <b>Hablar</b> cuando quieras.</span></div>
           </div>
           <div class="sim-controls">
             <button class="btn btn-rosa talk-btn" id="talkBtn">🎤 Hablar <span class="kbd">Space</span></button>
             <button class="btn btn-sim" id="hintBtn">💡 Pista <span class="kbd">H</span></button>
             <button class="btn btn-sim" id="listenBtn">🔊 O&iacute;r frase <span class="kbd">L</span></button>
             <button class="btn btn-sim" id="acceptBtn" disabled>Continuar → <span class="kbd">N</span></button>
-            <span class="score-flash" id="scoreFlash"></span>
+            <span class="score-flash" id="scoreFlash" aria-live="polite"></span>
           </div>
           <div class="step-dots" id="stepDots"></div>
         </div>
@@ -1050,40 +1082,50 @@ footer.app-foot .rosa { color: var(--rosa-tinta); }
   <div class="modal-body">
     <h3>Ajustes · Settings</h3>
     <div class="set-row">
-      <span class="s-name">Dialecto de reconocimiento<span class="s-sub">Speech recognition accent</span></span>
-      <select class="f-in" id="setDialect" style="width:170px">
+      <span class="s-name" id="lblUiLang">Idioma de las instrucciones<span class="s-sub" lang="en">Instruction language (the Spanish you're LEARNING stays Spanish)</span></span>
+      <select class="f-in" id="setUiLang" aria-labelledby="lblUiLang" style="width:170px">
+        <option value="es">Español</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+    <div class="set-row">
+      <span class="s-name" id="lblDialect">Dialecto de reconocimiento<span class="s-sub" lang="en">Speech recognition accent</span></span>
+      <select class="f-in" id="setDialect" aria-labelledby="lblDialect" style="width:170px">
         <option value="es-MX">Español (México)</option>
         <option value="es-US">Español (EE. UU.)</option>
         <option value="es-ES">Español (España)</option>
       </select>
     </div>
     <div class="set-row">
-      <span class="s-name">Voz del paciente<span class="s-sub">Text-to-speech voice</span></span>
-      <select class="f-in" id="setVoice" style="width:170px"></select>
+      <span class="s-name" id="lblVoice">Voz del paciente<span class="s-sub" lang="en">Best voice is auto-picked; Edge has the most natural ones</span></span>
+      <span style="display:flex; gap:6px; align-items:center">
+        <select class="f-in" id="setVoice" aria-labelledby="lblVoice" style="width:150px"></select>
+        <button class="icon-btn" id="setVoiceTest" title="Probar voz / Preview voice" aria-label="Probar voz">🔊</button>
+      </span>
     </div>
     <div class="set-row">
-      <span class="s-name">Velocidad de la voz<span class="s-sub">Patient speaking rate</span></span>
-      <input type="range" id="setRate" min="0.6" max="1.2" step="0.05" value="0.95" style="width:150px">
+      <span class="s-name" id="lblRate">Velocidad de la voz<span class="s-sub" lang="en">Patient speaking rate</span></span>
+      <input type="range" id="setRate" aria-labelledby="lblRate" min="0.6" max="1.2" step="0.05" value="0.95" style="width:150px">
     </div>
     <div class="set-row">
-      <span class="s-name">Subt&iacute;tulos en ingl&eacute;s<span class="s-sub">Show English under patient lines</span></span>
-      <span class="switch"><input type="checkbox" id="setEn" checked><span class="track"></span></span>
+      <span class="s-name" id="lblEn">Subt&iacute;tulos en ingl&eacute;s<span class="s-sub" lang="en">Show English under patient lines</span></span>
+      <span class="switch"><input type="checkbox" id="setEn" aria-labelledby="lblEn" checked><span class="track"></span></span>
     </div>
     <div class="set-row">
-      <span class="s-name">C&aacute;mara en encuentros<span class="s-sub">Camera on during encounters</span></span>
-      <span class="switch"><input type="checkbox" id="setCam" checked><span class="track"></span></span>
+      <span class="s-name" id="lblCam">C&aacute;mara en encuentros<span class="s-sub" lang="en">Camera on during encounters</span></span>
+      <span class="switch"><input type="checkbox" id="setCam" aria-labelledby="lblCam" checked><span class="track"></span></span>
     </div>
     <div class="set-row">
-      <span class="s-name">Grabar encuentros<span class="s-sub">Record video to review yourself</span></span>
-      <span class="switch"><input type="checkbox" id="setRec"><span class="track"></span></span>
+      <span class="s-name" id="lblRec">Grabar encuentros<span class="s-sub" lang="en">Record video to review yourself</span></span>
+      <span class="switch"><input type="checkbox" id="setRec" aria-labelledby="lblRec"><span class="track"></span></span>
     </div>
     <div class="set-row">
-      <span class="s-name">Mostrar la frase objetivo<span class="s-sub">Reveal target words before speaking (easier)</span></span>
-      <span class="switch"><input type="checkbox" id="setReveal"><span class="track"></span></span>
+      <span class="s-name" id="lblReveal">Mostrar la frase objetivo<span class="s-sub" lang="en">Reveal target words before speaking (easier)</span></span>
+      <span class="switch"><input type="checkbox" id="setReveal" aria-labelledby="lblReveal"><span class="track"></span></span>
     </div>
     <div class="set-row">
-      <span class="s-name">Porras en tu tel&eacute;fono 📣<span class="s-sub">Cheer pushes via the free ntfy app</span></span>
-      <span class="switch"><input type="checkbox" id="setNtfy"><span class="track"></span></span>
+      <span class="s-name" id="lblNtfy">Porras en tu tel&eacute;fono 📣<span class="s-sub" lang="en">Cheer pushes via the free ntfy app</span></span>
+      <span class="switch"><input type="checkbox" id="setNtfy" aria-labelledby="lblNtfy"><span class="track"></span></span>
     </div>
     <div class="ntfy-set-detail" id="ntfyDetail" style="display:none">
       Tu canal: <span class="topic-pill" id="setTopic"></span><br>

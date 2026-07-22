@@ -113,7 +113,7 @@ const SCENARIOS = [
     en: "Chest pain in the ED",
     setting: "Sala de urgencias",
     difficulty: 2,
-    patient: { name: "Sr. Ramírez", age: 58, persona: "Llega sudoroso, con la mano en el pecho. Hipertenso, fumador.", voice: { pitch: 0.8, rate: 0.95 } },
+    patient: { name: "Sr. Ramírez", age: 58, persona: "Llega sudoroso, con la mano en el pecho. Hipertenso, fumador.", voice: { pitch: 0.8, rate: 0.95, gender: "m" } },
     steps: [
       {
         patient: { es: "Ay, doctor… tengo un dolor muy fuerte en el pecho.", en: "Oh, doctor… I have very strong chest pain." },
@@ -180,7 +180,7 @@ const SCENARIOS = [
     en: "Pediatric fever",
     setting: "Consulta de pediatría",
     difficulty: 1,
-    patient: { name: "Sra. López", age: 31, persona: "Madre preocupada. Trae a Mateo, de 2 años, con fiebre desde anoche.", voice: { pitch: 1.25, rate: 1.0 } },
+    patient: { name: "Sra. López", age: 31, persona: "Madre preocupada. Trae a Mateo, de 2 años, con fiebre desde anoche.", voice: { pitch: 1.25, rate: 1.0, gender: "f" } },
     steps: [
       {
         patient: { es: "Doctora, mi hijo tiene fiebre desde anoche y no quiere comer.", en: "Doctor, my son has had a fever since last night and doesn't want to eat." },
@@ -234,8 +234,8 @@ const SCENARIOS = [
       {
         patient: { es: "¿Y si la fiebre no baja?", en: "And if the fever doesn't go down?" },
         cue: "Return precautions: if fever persists two more days or he won't drink, call or come back.",
-        target: { es: "Si la fiebre sigue en dos días, o si no toma líquidos, llame o regrese.", en: "If the fever continues in two days, or if he won't drink fluids, call or come back." },
-        alt: ["Si la fiebre no baja en dos días o no toma líquidos, llámenos o regrese."],
+        target: { es: "Si la fiebre no baja en dos días, o si no toma líquidos, llame o regrese.", en: "If the fever doesn't come down in two days, or if he won't drink fluids, call or come back." },
+        alt: ["Si la fiebre sigue en dos días o no toma líquidos, llámenos o regrese."],
         vocab: ["regresar", "llamar"]
       }
     ]
@@ -247,7 +247,7 @@ const SCENARIOS = [
     en: "First prenatal visit",
     setting: "Consulta de obstetricia",
     difficulty: 2,
-    patient: { name: "Sra. García", age: 24, persona: "Primer embarazo. Ilusionada pero nerviosa; prueba casera positiva.", voice: { pitch: 1.2, rate: 1.0 } },
+    patient: { name: "Sra. García", age: 24, persona: "Primer embarazo. Ilusionada pero nerviosa; prueba casera positiva.", voice: { pitch: 1.2, rate: 1.0, gender: "f" } },
     steps: [
       {
         patient: { es: "Buenos días. Creo que estoy embarazada… la prueba salió positiva.", en: "Good morning. I think I'm pregnant… the test came out positive." },
@@ -280,7 +280,7 @@ const SCENARIOS = [
       {
         patient: { es: "Sí, el primero. Estoy un poco nerviosa.", en: "Yes, the first. I'm a little nervous." },
         cue: "Normalize her nerves and start prenatal vitamins with folic acid.",
-        target: { es: "Es normal estar nerviosa. Vamos a empezar vitaminas prenatales con ácido fólico.", en: "It's normal to be nervous. We'll start prenatal vitamins with folic acid." },
+        target: { es: "Es normal estar nerviosa. Vamos a empezar a tomar vitaminas prenatales con ácido fólico.", en: "It's normal to be nervous. We'll start taking prenatal vitamins with folic acid." },
         alt: ["Es normal. Le voy a recetar vitaminas prenatales con ácido fólico."],
         vocab: ["vitaminas", "ácido fólico"]
       },
@@ -314,7 +314,7 @@ const SCENARIOS = [
     en: "Diabetes counseling",
     setting: "Consulta de medicina interna",
     difficulty: 3,
-    patient: { name: "Sr. Torres", age: 61, persona: "Diabético tipo 2. Se le olvida la metformina; la A1c ha subido.", voice: { pitch: 0.85, rate: 0.95 } },
+    patient: { name: "Sr. Torres", age: 61, persona: "Diabético tipo 2. Se le olvida la metformina; la A1c ha subido.", voice: { pitch: 0.85, rate: 0.95, gender: "m" } },
     steps: [
       {
         patient: { es: "Doctor, aquí vengo para mi control de la diabetes.", en: "Doctor, I'm here for my diabetes check-up." },
@@ -381,7 +381,7 @@ const SCENARIOS = [
     en: "Pre-anesthesia consent",
     setting: "Visita preoperatoria",
     difficulty: 3,
-    patient: { name: "Sra. Delgado", age: 45, persona: "Colecistectomía mañana. Muy nerviosa por la anestesia general.", voice: { pitch: 1.15, rate: 0.98 } },
+    patient: { name: "Sra. Delgado", age: 45, persona: "Colecistectomía mañana. Muy nerviosa por la anestesia general.", voice: { pitch: 1.15, rate: 0.98, gender: "f" } },
     steps: [
       {
         patient: { es: "Me operan mañana de la vesícula y estoy muy nerviosa por la anestesia.", en: "I'm having gallbladder surgery tomorrow and I'm very nervous about the anesthesia." },
@@ -413,17 +413,17 @@ const SCENARIOS = [
       },
       {
         patient: { es: "¿Puedo desayunar antes de venir?", en: "Can I have breakfast before coming?" },
-        cue: "NPO instructions: nothing to eat or drink after midnight.",
-        target: { es: "No. No coma ni beba nada después de la medianoche.", en: "No. Don't eat or drink anything after midnight." },
-        alt: ["No, no debe comer ni beber nada después de la medianoche."],
-        vocab: ["ayuno", "medianoche"]
+        cue: "Modern fasting instructions: no solid food after midnight; clear liquids are allowed until two hours before.",
+        target: { es: "No coma alimentos sólidos después de la medianoche. Puede tomar líquidos claros hasta dos horas antes.", en: "Don't eat solid food after midnight. You may have clear liquids until two hours before." },
+        alt: ["Nada sólido después de la medianoche; líquidos claros hasta dos horas antes."],
+        vocab: ["ayuno", "medianoche", "líquidos claros"]
       },
       {
         patient: { es: "¿Ni siquiera agua?", en: "Not even water?" },
-        cue: "Only a small sip of water for her pills, if instructed.",
-        target: { es: "Solo un traguito de agua para sus pastillas, si se lo indicamos.", en: "Only a small sip of water for your pills, if we instruct you to." },
-        alt: ["Solamente un trago pequeño de agua para sus pastillas, si se lo indicamos."],
-        vocab: ["trago", "pastillas"]
+        cue: "Clarify: plain water is fine until two hours before — after that, nothing.",
+        target: { es: "Agua sola sí, hasta dos horas antes de la cirugía. Después de eso, nada.", en: "Plain water is fine, up to two hours before surgery. After that, nothing." },
+        alt: ["Sí, puede tomar agua sola hasta dos horas antes. Después, nada."],
+        vocab: ["agua", "cirugía"]
       },
       {
         patient: { es: "¿Y cuáles son los riesgos?", en: "And what are the risks?" },
@@ -448,7 +448,7 @@ const SCENARIOS = [
     en: "Psychiatric intake & safety screen",
     setting: "Consulta de psiquiatría",
     difficulty: 3,
-    patient: { name: "Srta. Vega", age: 19, persona: "Estudiante universitaria. Habla bajito, mirada al suelo. Dos meses sin ánimo.", voice: { pitch: 1.3, rate: 0.9 } },
+    patient: { name: "Srta. Vega", age: 19, persona: "Estudiante universitaria. Habla bajito, mirada al suelo. Dos meses sin ánimo.", voice: { pitch: 1.3, rate: 0.9, gender: "f" } },
     steps: [
       {
         patient: { es: "Mi mamá me hizo venir. Últimamente no tengo ganas de nada.", en: "My mom made me come. Lately I don't feel like doing anything." },
@@ -594,14 +594,25 @@ const SCENARIO_MOODS = {
 };
 
 const PRONUN_TIPS = [
-  "La «rr» se vibra con la punta de la lengua: pe-rro, no pe-ro. Practica con «el carro corre rápido».",
-  "La «j» suena como la «h» inglesa fuerte: ojo, bajo, mejor.",
-  "La «h» es MUDA: «hígado» empieza con sonido de «í».",
-  "Las vocales son puras y cortas: «no» es /no/, nunca /nou/.",
-  "La «ñ» es como «ny» en canyon: riñón, niño, mañana.",
-  "La «d» entre vocales se suaviza casi como «th» en «the»: to-do, na-da.",
-  "La «ll» y la «y» suenan igual: pastilla, ayuda.",
-  "«Qué tan fuerte» — el acento escrito marca la pregunta, la voz sube al final.",
-  "En «usted», la «d» final casi desaparece: /usté/.",
-  "La «z» y la «c» (ce, ci) suenan como «s» en Latinoamérica: corazón = /corasón/."
+  { es: "La «rr» se vibra con la punta de la lengua: pe-rro, no pe-ro. Practica con «el carro corre rápido».",
+    en: "Roll the «rr» with the tip of your tongue: pe-rro, not pe-ro. Practice with «el carro corre rápido»." },
+  { es: "La «j» suena como la «h» inglesa fuerte: ojo, bajo, mejor.",
+    en: "The «j» sounds like a strong English 'h': ojo, bajo, mejor." },
+  { es: "La «h» es MUDA: «hígado» empieza con sonido de «í».",
+    en: "The «h» is SILENT: «hígado» starts straight on the 'ee' sound." },
+  { es: "Las vocales son puras y cortas: «no» es /no/, nunca /nou/.",
+    en: "Vowels are pure and short: «no» is /no/, never /nou/." },
+  { es: "La «ñ» es como «ny» en canyon: riñón, niño, mañana.",
+    en: "The «ñ» is like 'ny' in canyon: riñón, niño, mañana." },
+  { es: "La «d» entre vocales se suaviza casi como «th» en «the»: to-do, na-da.",
+    en: "Between vowels the «d» softens, almost like 'th' in 'the': to-do, na-da." },
+  { es: "La «ll» y la «y» suenan igual: pastilla, ayuda.",
+    en: "«ll» and «y» sound the same, like the 'y' in yes: pastilla, ayuda." },
+  { es: "«Qué tan fuerte» — el acento escrito marca la pregunta, la voz sube al final.",
+    en: "In questions like «¿qué tan fuerte?», let your voice rise at the end." },
+  { es: "En «usted», la «d» final casi desaparece: /usté/.",
+    en: "In «usted» the final «d» almost disappears: /usté/." },
+  { es: "La «z» y la «c» (ce, ci) suenan como «s» en Latinoamérica: corazón = /corasón/.",
+    en: "In Latin America «z» and soft «c» sound like 's': corazón = /corasón/." }
 ];
+

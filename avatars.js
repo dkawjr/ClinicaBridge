@@ -71,9 +71,8 @@ function avBuildSVG(c, uid) {
   if (c.style === "short") {
     hairFront = `
       <path d="M92,150 C90,94 118,56 160,56 C202,56 230,94 228,150
-               C224,120 214,104 200,98 C207,112 209,122 208,132
-               C200,106 182,92 160,92 C138,92 120,106 112,132
-               C111,122 113,112 120,98 C106,104 96,120 92,150 Z" fill="${H}"/>
+               C226,132 220,119 210,111 C196,99 178,93 160,93
+               C142,93 124,99 110,111 C100,119 94,132 92,150 Z" fill="${H}"/>
       <path d="M116,102 C124,88 140,79 160,78 C148,84 132,92 124,106 Z" fill="${HD}" opacity=".45"/>`;
   } else if (c.style === "balding") {
     hairFront = `
@@ -120,11 +119,11 @@ function avBuildSVG(c, uid) {
       <path d="M224,120 C236,164 238,226 232,272 C228,296 216,306 204,308 C212,282 214,244 212,208 Z" fill="${HD}"/>`;
     hairFront = `
       <path d="M90,156 C86,94 116,52 160,52 C204,52 234,94 230,156
-               C229,124 220,106 206,98 C213,112 214,124 210,140
-               C206,120 196,106 186,100 C192,112 194,126 192,138
-               C180,116 170,108 160,106 C150,108 140,116 128,138
-               C126,126 128,112 134,100 C124,106 114,120 110,140
-               C106,124 107,112 114,98 C100,106 91,124 90,156 Z" fill="${H}"/>`;
+               C229,120 220,102 206,94 C213,106 214,116 210,128
+               C206,110 196,98 186,92 C192,102 194,114 192,124
+               C180,106 170,98 160,96 C150,98 140,106 128,124
+               C126,114 128,102 134,92 C124,98 114,110 110,128
+               C106,116 107,106 114,94 C100,102 91,120 90,156 Z" fill="${H}"/>`;
   }
 
   /* ---- clothing ---- */
@@ -175,7 +174,7 @@ function avBuildSVG(c, uid) {
   const eyeR = c.young ? 1.12 : 1;
 
   return `
-<svg class="retrato" viewBox="0 0 320 380" role="img" aria-label="Retrato del paciente" xmlns="http://www.w3.org/2000/svg">
+<svg class="retrato" viewBox="0 0 320 380" role="img" style="--bh:${Math.min(0.38, (c.blush || 0.15) * 2.2).toFixed(2)}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <radialGradient id="avbg${uid}" cx="50%" cy="38%" r="75%">
       <stop offset="0%" stop-color="#FFFFFF"/><stop offset="100%" stop-color="${c.bg}"/>
@@ -189,6 +188,7 @@ function avBuildSVG(c, uid) {
     <clipPath id="avclip${uid}"><circle cx="160" cy="176" r="152"/></clipPath>
   </defs>
 
+  <circle class="av-halo" cx="160" cy="176" r="149" fill="none" stroke="#E4007C" stroke-width="5" opacity="0"/>
   <circle cx="160" cy="176" r="152" fill="url(#avbg${uid})"/>
   <g clip-path="url(#avclip${uid})">
     <g class="av-body">
@@ -236,10 +236,12 @@ function avBuildSVG(c, uid) {
         <rect class="av-lid" x="171" y="140" width="30" height="17" fill="${S}" style="transform-origin:186px 141px; transform:scaleY(0)"/>
       </g>
 
-      <path d="M160,158 C159,168 156,176 152,181 Q157,186 162,184" fill="none" stroke="${SD}" stroke-width="2.8" stroke-linecap="round" opacity=".65"/>
+      <path d="M160,160 C159,168 158,174 157,178" fill="none" stroke="${SD}" stroke-width="2.4" stroke-linecap="round" opacity=".4"/>
+      <path d="M153,181 Q160,187 167,181" fill="none" stroke="${SD}" stroke-width="2.6" stroke-linecap="round" opacity=".5"/>
 
       <g class="av-mouth" data-viseme="closed" style="transform-origin:160px 207px">
         <path class="m-closed" d="M144,206 Q160,213 176,206" fill="none" stroke="${c.lip}" stroke-width="4.5" stroke-linecap="round"/>
+        <path class="m-press" d="M147,208 Q160,206 173,208 M150,208 Q160,212 170,208" fill="none" stroke="${c.lip}" stroke-width="3.8" stroke-linecap="round"/>
         <path class="m-smile" d="M141,203 Q160,220 179,203 Q160,211 141,203 Z" fill="${c.lip}"/>
         <path class="m-frown" d="M145,210 Q160,201 175,210" fill="none" stroke="${c.lip}" stroke-width="4.5" stroke-linecap="round"/>
         <path class="m-grim" d="M142,205 L178,205 M146,205 Q160,212 174,205" fill="none" stroke="${c.lip}" stroke-width="4" stroke-linecap="round"/>
@@ -283,14 +285,23 @@ function createAvatar(container, key, opts = {}) {
   const svg = container.querySelector("svg");
   svg.classList.add("av-live");
   if (opts.staticPose) svg.classList.add("av-static");
+  if (opts.decorative) { svg.setAttribute("aria-hidden", "true"); svg.removeAttribute("role"); }
+  else svg.setAttribute("aria-label", opts.label ? `Retrato de ${opts.label}` : "Retrato del paciente");
   const mouth = svg.querySelector(".av-mouth");
   const lids = svg.querySelectorAll(".av-lid");
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduceQ = matchMedia("(prefers-reduced-motion: reduce)");
+  let reduce = reduceQ.matches;
+  const onReduceChange = e => {
+    reduce = e.matches;
+    if (reduce) { clearTimeout(blinkT); clearTimeout(visemeT); restLids(); setViseme(MOUTH_IDLE[mood]); }
+    else { scheduleBlink(); if (speaking) speakLoop(); }
+  };
+  try { reduceQ.addEventListener("change", onReduceChange); } catch {}
 
   let mood = "neutral", speaking = false, destroyed = false;
   let blinkT = null, visemeT = null;
 
-  const MOUTH_IDLE = { neutral: "closed", pain: "grim", worried: "closed", scared: "small", sad: "frown", relieved: "smile", happy: "smile" };
+  const MOUTH_IDLE = { neutral: "closed", pain: "grim", worried: "press", scared: "small", sad: "frown", relieved: "smile", happy: "smile" };
   const SQUINT = { pain: 0.55, sad: 0.28, worried: 0.12 }; // partial upper-lid closure per mood
   const VISEMES = ["small", "mid", "wide", "oh", "mid", "small", "wide"];
 
@@ -301,7 +312,10 @@ function createAvatar(container, key, opts = {}) {
     mood = AV_MOODS.includes(m) ? m : "neutral";
     AV_MOODS.forEach(x => svg.classList.remove("mood-" + x));
     svg.classList.add("mood-" + mood);
+    // let the lid squint settle at the same pace as the brows, then restore fast-blink timing
+    svg.classList.add("mood-shift");
     restLids();
+    setTimeout(() => { if (!destroyed) svg.classList.remove("mood-shift"); }, 420);
     if (!speaking) setViseme(MOUTH_IDLE[mood]);
   }
 
@@ -336,6 +350,7 @@ function createAvatar(container, key, opts = {}) {
     destroy() {
       destroyed = true;
       clearTimeout(blinkT); clearTimeout(visemeT);
+      try { reduceQ.removeEventListener("change", onReduceChange); } catch {}
       container.innerHTML = "";
     }
   };

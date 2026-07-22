@@ -11,6 +11,12 @@ const dateKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, 
 const todayKey = () => dateKey(new Date());
 const yesterdayKey = () => { const d = new Date(); d.setDate(d.getDate() - 1); return dateKey(d); };
 
+// escape untrusted strings before any innerHTML interpolation (titles from
+// imported JSON, backups, user text) — the only defense the app needs, applied everywhere
+const esc = s => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
 function toast(msg, ms = 2600) {
   const t = $("toast");
   t.textContent = msg;
@@ -42,7 +48,13 @@ const LS = {
 };
 
 let profile = LS.get("cb_profile", null); // {name,title,goal,story,struggles[],level,daily,ntfy:{on,topic}}
-let settings = LS.get("cb_settings", { dialect: "es-MX", voiceURI: "", rate: 0.95, showEn: true, cam: true, rec: false, reveal: false });
+let settings = LS.get("cb_settings", { dialect: "es-MX", voiceURI: "", voiceAuto: true, rate: 0.95, showEn: true, cam: true, rec: false, reveal: false, uiLang: "es" });
+if (settings.uiLang !== "en") settings.uiLang = "es";
+if (settings.voiceAuto === undefined) settings.voiceAuto = true;
+
+// L(): instruction-language helper. The Spanish being LEARNED never goes
+// through this — only UI chrome, prompts, and coaching do.
+const L = (es, en) => settings.uiLang === "en" && en != null ? en : es;
 let progress = LS.get("cb_progress", {
   latidos: 0, phrases: 0, encounters: 0, seconds: 0,
   today: { date: todayKey(), latidos: 0 },
@@ -104,7 +116,8 @@ function awardLatidos(n, quiet) {
     else if (progress.lastGoalDate !== todayKey()) progress.streak = 1;
     progress.lastGoalDate = todayKey();
     confetti(80);
-    toast(`🔥 ¡Meta diaria cumplida, ${displayName()}! Racha: ${progress.streak} día${progress.streak === 1 ? "" : "s"}`);
+    toast(L(`🔥 ¡Meta diaria cumplida, ${displayName()}! Racha: ${progress.streak} día${progress.streak === 1 ? "" : "s"}`,
+            `🔥 Daily goal met, ${displayName()}! Streak: ${progress.streak} day${progress.streak === 1 ? "" : "s"}`));
     const mile = progress.streak > 1 && progress.streak % 7 === 0 ? ` ¡${progress.streak} días seguidos — una semana más! 🏆` : "";
     pushNtfy(`Meta diaria cumplida - ${profile ? profile.name : ""}`,
       `💗 ${progress.today.latidos} latidos hoy (meta: ${goal}). Racha: **${progress.streak} días**.${mile} ¡Sigue así!`, "tada");
@@ -158,7 +171,7 @@ function renderHeader() {
   $("statPhrases").textContent = progress.phrases;
   $("statEnc").textContent = progress.encounters;
   if (profile) {
-    $("heroGreet").textContent = `Hola, ${displayName()} · ¿pasamos consulta?`;
+    $("heroGreet").textContent = L(`Hola, ${displayName()} · ¿pasamos consulta?`, `Hi, ${displayName()} · ready to see patients?`);
   }
 }
 
@@ -241,12 +254,17 @@ function scorePhrase(targetEs, alts, saidText) {
 // ---------------- speech recognition wrapper ----------------
 const SRClass = window.SpeechRecognition || window.webkitSpeechRecognition;
 const srSupported = !!SRClass;
-if (!srSupported) $("supportBanner").style.display = "block";
+if (!srSupported) {
+  $("supportBanner").style.display = "block";
+  // the talk CTAs can never work — disable them visibly instead of letting them wedge
+  ["talkBtn", "drillTalk", "freeTalk"].forEach(id => { const b = $(id); if (b) { b.disabled = true; b.title = "Necesitas Chrome o Edge para hablar"; } });
+}
 
 let activeRec = null;
 function listenOnce({ onInterim, onFinal, onEnd, onError }) {
-  if (!srSupported) { toast("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge."); return null; }
-  stopListening();
+  if (!srSupported) { toast(L("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge.", "Your browser doesn't support speech recognition — use Chrome or Edge.")); return null; }
+  stopListening(true); // discard any straggler recognizer so it can't desync the new one
+  speechSynthesis.cancel(); // never listen while the patient is mid-sentence
   const rec = new SRClass();
   rec.lang = settings.dialect;
   rec.interimResults = true;
@@ -265,36 +283,77 @@ function listenOnce({ onInterim, onFinal, onEnd, onError }) {
     if (onInterim) onInterim((finalText + interim).trim());
   };
   rec.onerror = e => {
-    if (e.error === "not-allowed") toast("Permiso de micrófono denegado — actívalo para practicar.");
-    else if (e.error !== "no-speech" && e.error !== "aborted") toast("Error de micrófono: " + e.error);
+    if (e.error === "not-allowed") toast(L("Permiso de micrófono denegado — actívalo para practicar.", "Microphone permission denied — enable it to practice."));
+    else if (e.error !== "no-speech" && e.error !== "aborted") toast(L("Error de micrófono: ", "Microphone error: ") + e.error);
     if (onError) onError(e.error);
   };
   rec.onend = () => {
-    activeRec = null;
+    // a discarded (aborted) recognizer must not touch state or fire callbacks —
+    // its late onend used to clear the NEW recognizer's tracking and wedge the mic
+    if (rec._discard) { if (activeRec === rec) activeRec = null; return; }
+    if (activeRec === rec) activeRec = null;
     if (onFinal) onFinal(finalText.trim(), alternatives);
     if (onEnd) onEnd();
   };
   try { rec.start(); activeRec = rec; } catch { /* already started */ }
   return rec;
 }
-function stopListening() {
-  if (activeRec) { try { activeRec.stop(); } catch {} activeRec = null; }
+function stopListening(discard) {
+  if (activeRec) {
+    const r = activeRec;
+    activeRec = null;
+    try {
+      if (discard) { r._discard = true; r.abort(); }
+      else r.stop(); // intentional stop: let final results flush to onFinal
+    } catch {}
+  }
 }
 
 // ---------------- text to speech ----------------
+// Voice quality lives or dies on voice CHOICE: the default pick on Windows is an
+// ancient robotic SAPI voice. We rank every installed Spanish voice — Edge's
+// neural "Natural" voices first, then Google's network voices — and auto-pick.
 let voices = [];
+const FEMALE_HINTS = ["dalia", "sabina", "paloma", "helena", "laura", "elvira", "camila", "lucia", "lucía", "ximena", "salome", "yolanda", "marina", "paulina", "abril", "beatriz", "candela", "carlota", "elena", "esmeralda", "estrella", "irene", "larissa", "renata", "sofia", "sofía", "teresa", "triana", "vera", "female"];
+const MALE_HINTS = ["jorge", "raul", "raúl", "pablo", "alvaro", "álvaro", "gerardo", "liberto", "saul", "saúl", "dario", "darío", "cecilio", "luciano", "pelayo", "andres", "andrés", "arnau", "nil", "male"];
+function scoreVoice(v) {
+  const n = v.name.toLowerCase();
+  let s = 0;
+  if (n.includes("natural")) s += 100;      // Edge neural voices
+  if (n.includes("neural")) s += 80;
+  if (n.includes("online")) s += 40;
+  if (n.includes("google")) s += 45;        // Chrome network voices
+  if (!v.localService) s += 30;             // cloud voices beat local SAPI
+  const lang = v.lang.toLowerCase().replace("_", "-");
+  if (lang === settings.dialect.toLowerCase()) s += 25;
+  else if (lang.startsWith("es-mx") || lang.startsWith("es-us") || lang.startsWith("es-419")) s += 12;
+  else if (lang.startsWith("es")) s += 8;
+  return s;
+}
+function bestVoice(gender) {
+  if (!voices.length) return null;
+  let pool = voices;
+  if (gender) {
+    const hints = gender === "f" ? FEMALE_HINTS : MALE_HINTS;
+    const g = voices.filter(v => hints.some(h => v.name.toLowerCase().includes(h)));
+    if (g.length) pool = g;
+  }
+  return pool.slice().sort((a, b) => scoreVoice(b) - scoreVoice(a))[0];
+}
 function loadVoices() {
   voices = speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().startsWith("es"));
   const sel = $("setVoice");
   sel.innerHTML = "";
-  if (!voices.length) { sel.innerHTML = "<option value=''>(voz del sistema)</option>"; return; }
-  voices.forEach(v => {
+  if (!voices.length) { sel.innerHTML = `<option value=''>${L("(voz del sistema)", "(system voice)")}</option>`; return; }
+  const best = bestVoice();
+  if (settings.voiceAuto && best) settings.voiceURI = best.voiceURI;
+  voices.slice().sort((a, b) => scoreVoice(b) - scoreVoice(a)).forEach(v => {
     const o = document.createElement("option");
-    o.value = v.voiceURI; o.textContent = `${v.name} (${v.lang})`;
+    o.value = v.voiceURI;
+    o.textContent = `${v.name.replace(/^Microsoft |^Google /, "").replace(/ - .*$/, "")} (${v.lang})${best && v.voiceURI === best.voiceURI ? " ★" : ""}`;
     if (v.voiceURI === settings.voiceURI) o.selected = true;
     sel.appendChild(o);
   });
-  if (!settings.voiceURI && voices[0]) settings.voiceURI = voices[0].voiceURI;
 }
 speechSynthesis.onvoiceschanged = loadVoices;
 loadVoices();
@@ -303,7 +362,9 @@ function speak(text, opts = {}) {
   return new Promise(resolve => {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    const v = voices.find(x => x.voiceURI === settings.voiceURI) || voices[0];
+    let v = null;
+    if (opts.gender && settings.voiceAuto) v = bestVoice(opts.gender);
+    if (!v) v = voices.find(x => x.voiceURI === settings.voiceURI) || bestVoice() || voices[0];
     if (v) u.voice = v;
     u.lang = v ? v.lang : "es-MX";
     u.rate = (opts.rate || 1) * settings.rate;
@@ -312,6 +373,101 @@ function speak(text, opts = {}) {
     speechSynthesis.speak(u);
   });
 }
+
+// ---------------- instruction-language (i18n) ----------------
+// [selector, spanishHTML, englishHTML, attr?] — the map covers every string a
+// zero-Spanish user needs to operate the app. Learning content stays Spanish.
+const UI_MAP = [
+  ["#obH1", `Te damos la bienvenida a <span style="color:#CFE5DE">Cl&iacute;nica</span><span class="rosa">Bridge</span>.<br>&iquest;C&oacute;mo te llamas?`,
+            `Welcome to <span style="color:#CFE5DE">Cl&iacute;nica</span><span class="rosa">Bridge</span>.<br>What's your name?`],
+  ["#obName", "Tu nombre…", "Your name…", "placeholder"],
+  ["#ob1Next", "Continuar →", "Continue →"],
+  ["#obH2", `&iquest;Para qu&eacute; est&aacute;s aprendiendo, <span class="rosa" id="obNameEcho"></span>?`,
+            `What are you learning for, <span class="rosa" id="obNameEcho"></span>?`],
+  ["#ob2Next", "Continuar →", "Continue →"],
+  ["#obH3", `&iquest;Qu&eacute; se te hace <span class="rosa">dif&iacute;cil</span>?`, `What feels <span class="rosa">hard</span> right now?`],
+  ["#ob3Next", "Listo →", "Done →"],
+  ["#obH4", "&iquest;C&oacute;mo est&aacute; tu espa&ntilde;ol cl&iacute;nico hoy?", "How's your clinical Spanish today?"],
+  ["#obH5", `Tu meta diaria de <span class="rosa">latidos</span> 💗`, `Your daily <span class="rosa">latidos</span> goal 💗`],
+  ["#obH6", `&iquest;Porras en tu <span class="rosa">tel&eacute;fono</span>? 📣`, `Cheers on your <span class="rosa">phone</span>? 📣`],
+  ["#obNtfyYes", `💗 S&iacute;, act&iacute;valas<small>takes 1 minute, one free app</small>`, `💗 Yes, turn them on<small>takes 1 minute, one free app</small>`],
+  ["#obNtfySkip", `Ahora no<small>you can turn it on later in Ajustes ⚙️</small>`, `Not now<small>you can turn it on later in Settings ⚙️</small>`],
+  ["#obNtfyTest", "📣 Enviar porra de prueba", "📣 Send a test cheer"],
+  ["#obFinish", "&iexcl;Empezar! →", "Let's go! →"],
+  ["#obDailyChoices .ob-choice[data-v='20'] small", "&approx; 5 min al d&iacute;a", "&approx; 5 min a day"],
+  ["#obDailyChoices .ob-choice[data-v='40'] small", "&approx; 10 min al d&iacute;a", "&approx; 10 min a day"],
+  ["#obDailyChoices .ob-choice[data-v='80'] small", "&approx; 20 min al d&iacute;a", "&approx; 20 min a day"],
+  ["#talkBtn", `🎤 Hablar <span class="kbd">Space</span>`, `🎤 Speak <span class="kbd">Space</span>`],
+  ["#hintBtn", `💡 Pista <span class="kbd">H</span>`, `💡 Hint <span class="kbd">H</span>`],
+  ["#listenBtn", `🔊 O&iacute;r frase <span class="kbd">L</span>`, `🔊 Hear phrase <span class="kbd">L</span>`],
+  ["#acceptBtn", `Continuar → <span class="kbd">N</span>`, `Continue → <span class="kbd">N</span>`],
+  ["#simExit", "Salir", "Exit"],
+  ["#pReplay", "↻ repetir", "↻ replay"],
+  ["#drillTalk", `🎤 Hablar <span class="kbd">Space</span>`, `🎤 Speak <span class="kbd">Space</span>`],
+  ["#drillListen", `🔊 Escuchar <span class="kbd">L</span>`, `🔊 Listen <span class="kbd">L</span>`],
+  ["#drillNext", `Siguiente → <span class="kbd">N</span>`, `Next → <span class="kbd">N</span>`],
+  ["#freeTalk", `🎤 Hablar <span class="kbd">Space</span>`, `🎤 Speak <span class="kbd">Space</span>`],
+  ["#freeListen", `🔊 Escuchar <span class="kbd">L</span>`, `🔊 Listen <span class="kbd">L</span>`],
+  ["#freeNext", `Siguiente → <span class="kbd">N</span>`, `Next → <span class="kbd">N</span>`],
+  ["#freeEdit", "✏️ Editar texto", "✏️ Edit text"],
+  ["#freeStart", "🎤 Empezar a practicar", "🎤 Start practicing"],
+  ["#freeSaveList", "💾 Guardar en «Mi pr&aacute;ctica»", "💾 Save to «Mi pr&aacute;ctica»"],
+  ["#fcAgain", "Otra vez", "Again"],
+  ["#fcListen", "🔊 Escuchar", "🔊 Listen"],
+  ["#fcNext", "Siguiente →", "Next →"],
+  ["#bAddStep", "+ A&ntilde;adir paso", "+ Add step"],
+  ["#bSave", "Guardar sala", "Save room"],
+  ["#bExport", "⬇ Exportar JSON", "⬇ Export JSON"],
+  ["#dbRetry", "↻ Repetir sala", "↻ Retry room"],
+  ["#dbDownload", "⬇ Descargar video", "⬇ Download video"],
+  ["#dbHome", "Volver a recepci&oacute;n", "Back to the lobby"],
+  ["#backupSave", "💾 Guardar una copia", "💾 Save a copy"],
+  ["#settingsClose", "Listo", "Done"],
+  ["#pgH1", `Tus &uacute;ltimos 14 d&iacute;as <small>verde = meta cumplida</small>`, `Your last 14 days <small>green = goal met</small>`],
+  ["#pgH2", `Las salas <small>tu mejor puntaje en cada una</small>`, `The rooms <small>your best score in each</small>`],
+  ["#pgH3", "Tu porqu&eacute; 💌", "Your why 💌"],
+  ["#pgH4", "&Uacute;ltimos encuentros", "Recent encounters"],
+  ["#pgH5", `Guarda tu progreso <small lang="en">no account needed — it lives in this browser</small>`, `Save your progress <small>no account needed — it lives in this browser</small>`],
+  ["#progressChip", `📈 <strong>Mi progreso</strong>`, `📈 <strong>My progress</strong>`],
+];
+const STAT_CHIPS = [
+  ["statMin", "⏱️", "min practicados", "min practiced"],
+  ["statPhrases", "🗣️", "frases", "phrases"],
+  ["statEnc", "🏥", "encuentros", "encounters"],
+];
+function applyUILang() {
+  UI_MAP.forEach(([sel, es, en, attr]) => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    if (attr) el.setAttribute(attr, L(es, en));
+    else el.innerHTML = L(es, en);
+  });
+  STAT_CHIPS.forEach(([id, emoji, es, en]) => {
+    const strong = $(id);
+    if (!strong) return;
+    const val = strong.textContent;
+    strong.parentElement.innerHTML = `${emoji} <strong id="${id}">${val}</strong>&nbsp;${L(es, en)}`;
+  });
+  $("langBtnLabel").textContent = settings.uiLang === "en" ? "ES" : "EN";
+  $("langBtn").title = settings.uiLang === "en" ? "Cambiar las instrucciones a español" : "Switch instructions to English";
+  $("obLangEs").setAttribute("aria-pressed", String(settings.uiLang === "es"));
+  $("obLangEn").setAttribute("aria-pressed", String(settings.uiLang === "en"));
+  if (ob && ob.name) { const e = $("obNameEcho"); if (e) e.textContent = ob.name; }
+}
+function setUILang(lang) {
+  settings.uiLang = lang === "en" ? "en" : "es";
+  saveAll();
+  applyUILang();
+  renderHeader();
+  if ($("view-home").classList.contains("active")) renderHome();
+  if ($("view-progress").classList.contains("active")) renderProgress();
+}
+$("langBtn").addEventListener("click", () => {
+  setUILang(settings.uiLang === "en" ? "es" : "en");
+  toast(settings.uiLang === "en" ? "Instructions in English. Your Spanish practice stays Spanish. 💗" : "Instrucciones en español. 💗");
+});
+$("obLangEs").addEventListener("click", () => setUILang("es"));
+$("obLangEn").addEventListener("click", () => setUILang("en"));
 
 // ---------------- navigation ----------------
 const VIEWS = ["home", "drill", "deck", "builder", "sim", "progress", "free"];
@@ -322,6 +478,10 @@ function show(view) {
   speechSynthesis.cancel();
   if (view === "home") { renderHome(); window.scrollTo(0, 0); }
   if (view === "progress") { renderProgress(); window.scrollTo(0, 0); }
+  // keep keyboard/screen-reader users oriented: focus the view they landed in
+  const el = $("view-" + view);
+  el.setAttribute("tabindex", "-1");
+  el.focus({ preventScroll: true });
 }
 document.querySelectorAll("[data-nav]").forEach(b => b.addEventListener("click", () => show(b.dataset.nav)));
 $("homeBtn").addEventListener("click", () => show("home"));
@@ -336,18 +496,20 @@ function doorHTML(sc, custom) {
   const best = progress.best[sc.id];
   const pips = [1, 2, 3].map(i => `<span class="pip ${i <= (sc.difficulty || 1) ? "on" : ""}"></span>`).join("");
   return `
-  <button class="door ${custom ? "custom-door" : ""}" data-sc="${sc.id}">
-    <span class="door-tab"><span class="num">${sc.room || "★"}</span><span class="sala">${custom ? "PERSONALIZADA" : "SALA"}</span><span class="knob"></span></span>
+  <span class="door-holder">
+  <button class="door ${custom ? "custom-door" : ""}" data-sc="${esc(sc.id)}">
+    <span class="door-tab"><span class="num">${esc(sc.room) || "★"}</span><span class="sala">${custom ? "PERSONALIZADA" : "SALA"}</span><span class="knob"></span></span>
     <span class="door-body">
-      <h3>${sc.title}</h3>
-      <span class="en">${sc.en || sc.setting || ""}</span>
+      <h3>${esc(sc.title)}</h3>
+      <span class="en">${esc(sc.en || sc.setting || "")}</span>
       <span class="door-meta">
         <span class="pips">${pips}</span>
-        <span class="best">${best != null ? `mejor: <strong>${best}%</strong>` : "sin intentos"}</span>
+        <span class="best">${best != null ? `${L("mejor:", "best:")} <strong>${best}%</strong>` : L("sin intentos", "not tried yet")}</span>
       </span>
     </span>
-    ${custom ? `<span class="del-x" data-del="${sc.id}" title="Borrar sala" role="button">✕</span>` : ""}
-  </button>`;
+  </button>
+  ${custom ? `<button class="del-x" data-del="${esc(sc.id)}" title="Borrar sala" aria-label="Borrar sala ${esc(sc.title)}">✕</button>` : ""}
+  </span>`;
 }
 
 function renderHome() {
@@ -359,22 +521,17 @@ function renderHome() {
     customScenarios.map(sc => doorHTML(sc, true)).join("") +
     `<button class="door new-door" id="newDoor">＋ &nbsp;Crea tu propia sala</button>`;
   rg.querySelectorAll(".door[data-sc]").forEach(d => {
-    d.addEventListener("click", e => {
-      const del = e.target.closest("[data-del]");
-      if (del) {
-        e.stopPropagation();
-        customScenarios = customScenarios.filter(s => s.id !== del.dataset.del);
-        saveAll(); renderHome(); toast("Sala borrada.");
-        return;
-      }
-      startSim(d.dataset.sc);
-    });
-    // static portrait on each door
+    d.addEventListener("click", () => startSim(d.dataset.sc));
+    // static portrait on each door (decorative)
     const face = document.createElement("span");
     face.className = "door-face";
     d.querySelector(".door-body").appendChild(face);
-    createAvatar(face, d.dataset.sc, { staticPose: true });
+    createAvatar(face, d.dataset.sc, { staticPose: true, decorative: true });
   });
+  rg.querySelectorAll(".del-x[data-del]").forEach(b => b.addEventListener("click", () => {
+    customScenarios = customScenarios.filter(s => s.id !== b.dataset.del);
+    saveAll(); renderHome(); toast(L("Sala borrada.", "Room deleted."));
+  }));
   $("newDoor").addEventListener("click", () => { openBuilder(); show("builder"); });
 
   // drills
@@ -399,17 +556,20 @@ function renderHome() {
 
   // saved free-practice lists
   $("scriptsGrid").innerHTML = scripts.map(s => `
-    <button class="tile" data-script="${s.id}">
+    <span class="door-holder">
+    <button class="tile" data-script="${esc(s.id)}">
       <span class="ico">📝</span>
-      <span><span class="t-title">${s.title}</span><br><span class="t-sub">${s.phrases.length} frases</span></span>
-      <span class="t-prog script-tile-del" data-sdel="${s.id}" title="Borrar">✕</span>
-    </button>`).join("") +
-    `<button class="tile" id="newScript"><span class="ico">➕</span><span><span class="t-title">Nueva pr&aacute;ctica</span><br><span class="t-sub">paste your own text</span></span></button>`;
-  document.querySelectorAll("[data-script]").forEach(t => t.addEventListener("click", e => {
-    const del = e.target.closest("[data-sdel]");
-    if (del) { e.stopPropagation(); scripts = scripts.filter(x => x.id !== del.dataset.sdel); saveAll(); renderHome(); toast("Práctica borrada."); return; }
+      <span><span class="t-title">${esc(s.title)}</span><br><span class="t-sub">${s.phrases.length} ${L("frases", "phrases")}</span></span>
+    </button>
+    <button class="del-x" data-sdel="${esc(s.id)}" title="Borrar" aria-label="Borrar pr&aacute;ctica ${esc(s.title)}">✕</button>
+    </span>`).join("") +
+    `<button class="tile" id="newScript"><span class="ico">➕</span><span><span class="t-title">Nueva pr&aacute;ctica</span><br><span class="t-sub" lang="en">paste your own text</span></span></button>`;
+  document.querySelectorAll("[data-script]").forEach(t => t.addEventListener("click", () => {
     const s = scripts.find(x => x.id === t.dataset.script);
     if (s) startFree(s.title, s.phrases);
+  }));
+  document.querySelectorAll("[data-sdel]").forEach(b => b.addEventListener("click", () => {
+    scripts = scripts.filter(x => x.id !== b.dataset.sdel); saveAll(); renderHome(); toast(L("Práctica borrada.", "Practice list deleted."));
   }));
   $("newScript").addEventListener("click", () => { openFreeSetup(); show("free"); });
 
@@ -428,23 +588,23 @@ function buildPlan() {
     const pick = profile.level === "ceiba"
       ? notMastered.slice().sort((a, b) => (b.difficulty || 0) - (a.difficulty || 0))[0]
       : notMastered.slice().sort((a, b) => (a.difficulty || 0) - (b.difficulty || 0))[0];
-    const why = profile.goal === "osce" ? "tu próximo caso estilo OSCE"
-      : profile.goal === "rotaciones" ? "para que en el hospital te salga solo"
-      : profile.goal === "comunidad" ? "una conversación que alguien de tu comunidad necesita"
-      : "tu próxima historia por dominar";
+    const why = profile.goal === "osce" ? L("tu próximo caso estilo OSCE", "your next OSCE-style case")
+      : profile.goal === "rotaciones" ? L("para que en el hospital te salga solo", "so it comes out automatically on the wards")
+      : profile.goal === "comunidad" ? L("una conversación que alguien de tu comunidad necesita", "a conversation someone in your community needs")
+      : L("tu próxima historia por dominar", "your next story to master");
     const best = progress.best[pick.id];
-    items.push({ emoji: "🚪", label: `Sala ${pick.room || "★"} · ${pick.title}`, why: best ? `subir tu ${best}% — ${why}` : why, run: () => startSim(pick.id) });
+    items.push({ emoji: "🚪", label: `Sala ${pick.room || "★"} · ${pick.title}`, why: best ? L(`subir tu ${best}% — ${why}`, `beat your ${best}% — ${why}`) : why, run: () => startSim(pick.id) });
   }
   // 2) from her struggles
-  if (st.includes("pron")) items.push({ emoji: "🌀", label: "Drill: Examen físico", why: "puro músculo de pronunciación — dijiste que la rr y la j se resisten", run: () => startDrill("examen") });
-  if (st.includes("vocab")) { const d = DECKS[Math.floor(Math.random() * DECKS.length)]; items.push({ emoji: "📚", label: `Tarjetas: ${d.title}`, why: "5 minutos de vocabulario — para que las palabras se queden", run: () => startDeck(d.id) }); }
-  if (st.includes("numeros")) items.push({ emoji: "🔢", label: "Tarjetas: Números y dosis", why: "dosis y fechas sin titubear — tú lo pediste", run: () => startDeck("numeros") });
-  if (st.includes("gram")) items.push({ emoji: "🧩", label: "Drill: Historia clínica", why: "armar preguntas completas, una y otra vez", run: () => startDrill("historia") });
-  if (st.includes("listen")) { const s2 = SCENARIOS[1]; items.push({ emoji: "👂", label: `Sala 02 · ${s2.title}`, why: "escucha a la Sra. López y usa ↻ repetir sin pena — así se entrena el oído", run: () => startSim(s2.id) }); }
-  if (st.includes("freeze")) items.push({ emoji: "🧊", label: "Drill: Saludos y presentación", why: "frases de arranque en automático = nunca más congelarte al entrar", run: () => startDrill("saludos") });
+  if (st.includes("pron")) items.push({ emoji: "🌀", label: "Drill: Examen físico", why: L("puro músculo de pronunciación — dijiste que la rr y la j se resisten", "pure pronunciation muscle — you said the rr and j fight back"), run: () => startDrill("examen") });
+  if (st.includes("vocab")) { const d = DECKS[Math.floor(Math.random() * DECKS.length)]; items.push({ emoji: "📚", label: `Tarjetas: ${d.title}`, why: L("5 minutos de vocabulario — para que las palabras se queden", "5 minutes of vocabulary — so the words stick"), run: () => startDeck(d.id) }); }
+  if (st.includes("numeros")) items.push({ emoji: "🔢", label: "Tarjetas: Números y dosis", why: L("dosis y fechas sin titubear — tú lo pediste", "doses and dates without hesitating — you asked for this"), run: () => startDeck("numeros") });
+  if (st.includes("gram")) items.push({ emoji: "🧩", label: "Drill: Historia clínica", why: L("armar preguntas completas, una y otra vez", "building complete questions, over and over"), run: () => startDrill("historia") });
+  if (st.includes("listen")) { const s2 = SCENARIOS[1]; items.push({ emoji: "👂", label: `Sala 02 · ${s2.title}`, why: L("escucha a la Sra. López y usa ↻ repetir sin pena — así se entrena el oído", "listen to Sra. López and use ↻ replay freely — that's how the ear trains"), run: () => startSim(s2.id) }); }
+  if (st.includes("freeze")) items.push({ emoji: "🧊", label: "Drill: Saludos y presentación", why: L("frases de arranque en automático = nunca más congelarte al entrar", "opening phrases on autopilot = never freezing at the door again"), run: () => startDrill("saludos") });
   // 3) her own material
-  if (scripts.length) { const s = scripts[0]; items.push({ emoji: "📝", label: `Tu práctica: ${s.title}`, why: "lo que TÚ quisiste trabajar", run: () => startFree(s.title, s.phrases) }); }
-  else items.push({ emoji: "📝", label: "Práctica libre", why: "pega tu propio guion y te lo calificamos en vivo", run: () => { openFreeSetup(); show("free"); } });
+  if (scripts.length) { const s = scripts[0]; items.push({ emoji: "📝", label: L(`Tu práctica: ${s.title}`, `Your practice: ${s.title}`), why: L("lo que TÚ quisiste trabajar", "the thing YOU chose to work on"), run: () => startFree(s.title, s.phrases) }); }
+  else items.push({ emoji: "📝", label: "Práctica libre", why: L("pega tu propio guion y te lo calificamos en vivo", "paste your own script and get it graded live"), run: () => { openFreeSetup(); show("free"); } });
   return items.slice(0, 3);
 }
 function renderPlan() {
@@ -452,11 +612,11 @@ function renderPlan() {
   const block = $("planBlock");
   if (!profile || !items.length) { block.style.display = "none"; return; }
   block.style.display = "block";
-  $("planTitle").textContent = `Tu plan de hoy, ${profile.name}`;
+  $("planTitle").textContent = L(`Tu plan de hoy, ${profile.name}`, `Your plan for today, ${profile.name}`);
   $("planGrid").innerHTML = items.map((it, i) => `
     <button class="plan-item" data-plan="${i}">
       <span class="p-emoji">${it.emoji}</span>
-      <span><span class="p-label">${it.label}</span><br><span class="p-why">${it.why}</span></span>
+      <span><span class="p-label">${esc(it.label)}</span><br><span class="p-why">${esc(it.why)}</span></span>
     </button>`).join("");
   block.querySelectorAll("[data-plan]").forEach(b => b.addEventListener("click", () => items[+b.dataset.plan].run()));
 }
@@ -469,26 +629,40 @@ function renderKaraoke(el, targetEs, statuses, hidden) {
   el.innerHTML = "";
   let ni = 0;
   toks.forEach(t => {
-    const hasWord = tokens(t).length > 0;
+    const nWords = tokens(t).length; // a display token may normalize to 2+ words (e.g. "sí/no")
     const span = document.createElement("span");
     span.className = "k-word";
     span.textContent = t;
-    if (hasWord) {
-      const st = statuses ? statuses[ni] : null;
+    if (nWords > 0) {
+      const sts = statuses ? statuses.slice(ni, ni + nWords) : null;
+      const st = sts && (sts.every(x => x === "hit") ? "hit" : sts.includes("miss") ? "miss" : sts.includes("close") ? "close" : sts[0]);
       if (st === "hit") span.classList.add("hit");
       else if (st === "close") span.classList.add("close");
       else if (st === "miss") span.classList.add("miss");
       else if (hidden) span.classList.add("hidden-word");
-      ni++;
+      ni += nWords;
     }
     el.appendChild(span);
   });
 }
 
-const CHEERS = ["¡Eso!", "¡Perfecto!", "¡Así se dice!", "Tu paciente te entendió perfecto.", "¡Qué bien suena!", "¡Impecable!"];
-const NUDGES = ["Casi — una vez más y sale.", "Vas bien, inténtalo otra vez.", "Escúchala otra vez y repite.", "No te rindas, ya casi."];
-function cheer() { const c = CHEERS[Math.floor(Math.random() * CHEERS.length)]; return profile && Math.random() < .4 ? `¡Eso, ${profile.name}!` : c; }
-function nudge() { return NUDGES[Math.floor(Math.random() * NUDGES.length)]; }
+const CHEERS = [
+  { es: "¡Eso!", en: "Yes! That's it!" }, { es: "¡Perfecto!", en: "Perfect!" },
+  { es: "¡Así se dice!", en: "That's how it's said!" },
+  { es: "Tu paciente te entendió perfecto.", en: "Your patient understood you perfectly." },
+  { es: "¡Qué bien suena!", en: "That sounded great!" }, { es: "¡Impecable!", en: "Flawless!" }
+];
+const NUDGES = [
+  { es: "Casi — una vez más y sale.", en: "Almost — one more try and you've got it." },
+  { es: "Vas bien, inténtalo otra vez.", en: "You're doing fine — try it again." },
+  { es: "Escúchala otra vez y repite.", en: "Listen to it again (🔊) and repeat." },
+  { es: "No te rindas, ya casi.", en: "Don't give up — you're close." }
+];
+function cheer() {
+  const c = CHEERS[Math.floor(Math.random() * CHEERS.length)];
+  return profile && Math.random() < .4 ? L(`¡Eso, ${profile.name}!`, `That's it, ${profile.name}!`) : L(c.es, c.en);
+}
+function nudge() { const n = NUDGES[Math.floor(Math.random() * NUDGES.length)]; return L(n.es, n.en); }
 
 // ============================================================
 // DRILL MODE
@@ -496,6 +670,7 @@ function nudge() { return NUDGES[Math.floor(Math.random() * NUDGES.length)]; }
 let drill = null; // {set, idx, attempted}
 function startDrill(setId) {
   const set = DRILL_SETS.find(s => s.id === setId);
+  if (!set) { toast("Ese ejercicio no existe."); show("home"); return; }
   drill = { set, idx: 0 };
   show("drill");
   $("drillTitle").textContent = set.title;
@@ -509,19 +684,20 @@ function renderDrillPhrase() {
   renderKaraoke($("drillWords"), p.es, null, false);
   $("drillEn").textContent = p.en;
   $("drillScore").textContent = "";
-  $("drillLive").innerHTML = "Pulsa <b>Hablar</b> y di la frase.";
+  $("drillLive").innerHTML = L("Pulsa <b>Hablar</b> y di la frase.", "Press <b>Speak</b> and say the phrase.");
   $("drillMicDot").classList.remove("live");
   const tip = PRONUN_TIPS[(idx + set.title.length) % PRONUN_TIPS.length];
   $("drillTip").className = "tip-box";
   $("drillTip").style.display = "block";
-  $("drillTip").innerHTML = `<b>TIP DE PRONUNCIACIÓN</b>${tip}`;
+  $("drillTip").innerHTML = `<b>${L("TIP DE PRONUNCIACIÓN", "PRONUNCIATION TIP")}</b>${L(tip.es, tip.en)}`;
 }
 function drillTalk() {
+  if (!srSupported) { toast("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge."); return; }
   const { set, idx } = drill;
   const p = set.phrases[idx];
   $("drillTalk").classList.add("listening");
   $("drillMicDot").classList.add("live");
-  $("drillLive").textContent = "Escuchando…";
+  $("drillLive").textContent = L("Escuchando…", "Listening…");
   listenOnce({
     onInterim: txt => {
       $("drillLive").textContent = txt || "…";
@@ -531,14 +707,14 @@ function drillTalk() {
     onFinal: (txt, alts) => {
       $("drillTalk").classList.remove("listening");
       $("drillMicDot").classList.remove("live");
-      if (!txt && !alts.length) { $("drillLive").textContent = "No te escuché — inténtalo otra vez."; return; }
+      if (!txt && !alts.length) { $("drillLive").textContent = L("No te escuché — inténtalo otra vez.", "I didn't hear you — try again."); return; }
       let best = scorePhrase(p.es, [], txt);
       alts.forEach(a => { const s = scorePhrase(p.es, [], a); if (s.score > best.score) best = s; });
       renderKaraoke($("drillWords"), p.es, best.statuses, false);
       $("drillLive").textContent = txt || "(sin transcripción)";
       const pct = Math.round(best.score * 100);
       $("drillScore").textContent = pct + "%";
-      $("drillScore").style.color = pct >= 80 ? "var(--verde-vital)" : pct >= 50 ? "var(--ambar)" : "var(--rojo)";
+      $("drillScore").style.color = pct >= 80 ? "var(--verde-tinta)" : pct >= 50 ? "var(--ambar-tinta)" : "var(--rojo)";
       progress.phrases += 1;
       const prev = (progress.drill[drill.set.id] = progress.drill[drill.set.id] || {})[idx] || 0;
       progress.drill[drill.set.id][idx] = Math.max(prev, pct);
@@ -562,6 +738,7 @@ $("drillNext").addEventListener("click", () => {
 let deck = null; // {d, order, pos}
 function startDeck(deckId) {
   const d = DECKS.find(x => x.id === deckId);
+  if (!d) { toast("Ese mazo no existe."); show("home"); return; }
   const order = d.cards.map((_, i) => i).sort(() => Math.random() - .5);
   deck = { d, order, pos: 0 };
   show("deck");
@@ -576,7 +753,7 @@ function renderCard() {
 }
 $("flashcard").addEventListener("click", () => $("flashcard").classList.toggle("flipped"));
 $("flashcard").addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); $("flashcard").classList.toggle("flipped"); } });
-$("fcNext").addEventListener("click", () => { deck.pos = (deck.pos + 1) % deck.order.length; if (deck.pos === 0) { toast("¡Mazo completo! 💗"); awardLatidos(5, true); } renderCard(); });
+$("fcNext").addEventListener("click", () => { deck.pos = (deck.pos + 1) % deck.order.length; if (deck.pos === 0) { toast(L("¡Mazo completo! 💗", "Deck complete! 💗")); awardLatidos(5, true); } renderCard(); });
 $("fcAgain").addEventListener("click", () => {
   const cur = deck.order[deck.pos];
   deck.order.push(cur);
@@ -591,13 +768,13 @@ $("fcListen").addEventListener("click", () => speak(deck.d.cards[deck.order[deck
 function coachTips(missedWords) {
   const tips = [];
   const joined = missedWords.join(" ").toLowerCase();
-  if (/rr/.test(joined)) tips.push("La «rr» se vibra con la punta de la lengua — practica despacio: pe-rro, ca-rro.");
-  if (/j|ge|gi/.test(joined)) tips.push("La «j» (y ge/gi) suena como una «h» inglesa fuerte: ojo, urgencias, gente.");
-  if (/ñ/.test(joined)) tips.push("La «ñ» es como «ny» en canyon: riñón, año, mañana.");
-  if (/ll|y/.test(joined)) tips.push("La «ll» y la «y» suenan igual, como la «y» de yes: pastilla, ayuda.");
-  if (/^h| h/.test(" " + joined)) tips.push("La «h» es muda — «hígado» empieza directo con la «í».");
-  if (/[áéíóú]/.test(joined)) tips.push("Ojo con el acento escrito — esa sílaba se pronuncia MÁS fuerte: corazón, análisis.");
-  if (/ción|sión/.test(joined)) tips.push("Las palabras en -ción llevan la fuerza al final: presión, respiración.");
+  if (/rr/.test(joined)) tips.push(L("La «rr» se vibra con la punta de la lengua — practica despacio: pe-rro, ca-rro.", "Roll the «rr» with the tip of your tongue — slowly at first: pe-rro, ca-rro."));
+  if (/j|ge|gi/.test(joined)) tips.push(L("La «j» (y ge/gi) suena como una «h» inglesa fuerte: ojo, urgencias, gente.", "The «j» (and ge/gi) sounds like a strong English 'h': ojo, urgencias, gente."));
+  if (/ñ/.test(joined)) tips.push(L("La «ñ» es como «ny» en canyon: riñón, año, mañana.", "The «ñ» is like 'ny' in canyon: riñón, año, mañana."));
+  if (/ll|y/.test(joined)) tips.push(L("La «ll» y la «y» suenan igual, como la «y» de yes: pastilla, ayuda.", "«ll» and «y» sound the same, like the 'y' in yes: pastilla, ayuda."));
+  if (/^h| h/.test(" " + joined)) tips.push(L("La «h» es muda — «hígado» empieza directo con la «í».", "The «h» is silent — «hígado» starts straight on the 'ee'."));
+  if (/[áéíóú]/.test(joined)) tips.push(L("Ojo con el acento escrito — esa sílaba se pronuncia MÁS fuerte: corazón, análisis.", "Watch the written accent — that syllable gets the STRESS: corazón, análisis."));
+  if (/ción|sión/.test(joined)) tips.push(L("Las palabras en -ción llevan la fuerza al final: presión, respiración.", "Words ending in -ción stress the end: presión, respiración."));
   return tips.slice(0, 3);
 }
 function renderCoach(el, targetEs, statuses, score) {
@@ -605,17 +782,22 @@ function renderCoach(el, targetEs, statuses, score) {
   const missed = displayToks.filter((_, i) => statuses[i] === "miss");
   const close = displayToks.filter((_, i) => statuses[i] === "close");
   el.style.display = "block";
-  let html = `<b class="c-head">TU COACH 🫀</b>`;
+  let html = `<b class="c-head">${L("TU COACH 🫀", "YOUR COACH 🫀")}</b>`;
   if (score >= 0.95) {
-    html += `Impecable — se te entendió cada palabra. Súbele un poco a la velocidad y queda perfecto.`;
+    html += L(`Impecable — se te entendió cada palabra. Súbele un poco a la velocidad y queda perfecto.`,
+              `Flawless — every word was understood. Speed it up a touch and it's perfect.`);
   } else if (!missed.length && !close.length) {
-    html += `¡Muy bien! Se entendió todo. Repítela una vez más con confianza y pasa a la siguiente.`;
+    html += L(`¡Muy bien! Se entendió todo. Repítela una vez más con confianza y pasa a la siguiente.`,
+              `Great! Everything was understood. Say it once more with confidence and move on.`);
   } else {
-    if (score >= 0.7) html += `Vas muy bien — el mensaje se entendió. Vamos a pulir lo que faltó:`;
-    else if (score >= 0.4) html += `Buen intento — se entendió una parte. Enfócate en estas palabras:`;
-    else html += `Tranquila, esto es lo difícil de verdad. Escucha la frase (🔊), dila en trocitos, y otra vez:`;
+    if (score >= 0.7) html += L(`Vas muy bien — el mensaje se entendió. Vamos a pulir lo que faltó:`,
+                                `You're doing well — the message got through. Let's polish what was missed (tap a word to hear it):`);
+    else if (score >= 0.4) html += L(`Buen intento — se entendió una parte. Enfócate en estas palabras:`,
+                                     `Good try — part of it was understood. Focus on these words (tap to hear them):`);
+    else html += L(`Con calma — esto es lo difícil de verdad. Escucha la frase (🔊), dila en trocitos, y otra vez:`,
+                   `No rush — this is the genuinely hard part. Listen to the phrase (🔊), say it in small chunks, then again:`);
     const chips = [...missed.map(w => ({ w, k: "miss" })), ...close.map(w => ({ w, k: "close" }))];
-    html += `<div class="miss-chips">${chips.map(c => `<span class="miss-chip" data-say="${c.w.replace(/"/g, "")}"${c.k === "close" ? ' style="color:var(--ambar); border-color:#E4D2A0"' : ""}>🔊 ${c.w}</span>`).join("")}</div>`;
+    html += `<div class="miss-chips">${chips.map(c => `<button class="miss-chip" data-say="${esc(c.w)}"${c.k === "close" ? ' style="color:var(--ambar-tinta); border-color:#E4D2A0"' : ""}>🔊 ${esc(c.w)}</button>`).join("")}</div>`;
     const tips = coachTips([...missed, ...close]);
     if (tips.length) html += `<ul>${tips.map(t => `<li>${t}</li>`).join("")}</ul>`;
   }
@@ -649,15 +831,16 @@ function renderFreePhrase() {
   $("freeCount").textContent = `${free.idx + 1} / ${free.phrases.length}`;
   renderKaraoke($("freeWords"), p, null, false);
   $("freeScore").textContent = "";
-  $("freeLive").innerHTML = "Pulsa <b>Hablar</b> y di la frase.";
+  $("freeLive").innerHTML = L("Pulsa <b>Hablar</b> y di la frase.", "Press <b>Speak</b> and say the phrase.");
   $("freeMicDot").classList.remove("live");
   $("freeCoach").style.display = "none";
 }
 function freeTalk() {
+  if (!srSupported) { toast("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge."); return; }
   const p = free.phrases[free.idx];
   $("freeTalk").classList.add("listening");
   $("freeMicDot").classList.add("live");
-  $("freeLive").textContent = "Escuchando…";
+  $("freeLive").textContent = L("Escuchando…", "Listening…");
   listenOnce({
     onInterim: txt => {
       $("freeLive").textContent = txt || "…";
@@ -666,14 +849,14 @@ function freeTalk() {
     onFinal: (txt, alts) => {
       $("freeTalk").classList.remove("listening");
       $("freeMicDot").classList.remove("live");
-      if (!txt && !alts.length) { $("freeLive").textContent = "No te escuché — inténtalo otra vez, más cerca del micrófono."; return; }
+      if (!txt && !alts.length) { $("freeLive").textContent = L("No te escuché — inténtalo otra vez, más cerca del micrófono.", "I didn't hear you — try again, closer to the mic."); return; }
       let best = scorePhrase(p, [], txt);
       alts.forEach(a => { const s = scorePhrase(p, [], a); if (s.score > best.score) best = s; });
       renderKaraoke($("freeWords"), p, best.statuses, false);
       $("freeLive").textContent = txt || "(sin transcripción)";
       const pct = Math.round(best.score * 100);
       $("freeScore").textContent = pct + "%";
-      $("freeScore").style.color = pct >= 80 ? "var(--verde-vital)" : pct >= 50 ? "var(--ambar)" : "var(--rojo)";
+      $("freeScore").style.color = pct >= 80 ? "var(--verde-tinta)" : pct >= 50 ? "var(--ambar-tinta)" : "var(--rojo)";
       renderCoach($("freeCoach"), p, best.statuses, best.score);
       progress.phrases += 1;
       awardLatidos(pct >= 80 ? 10 : pct >= 50 ? 5 : 2, true);
@@ -683,20 +866,20 @@ function freeTalk() {
 }
 $("freeStart").addEventListener("click", () => {
   const phrases = splitPhrases($("freeText").value);
-  if (!phrases.length) { toast("Escribe o pega al menos una frase en español."); return; }
-  startFree($("freeTitle").value.trim() || "Mi práctica", phrases);
+  if (!phrases.length) { toast(L("Escribe o pega al menos una frase en español.", "Type or paste at least one Spanish phrase.")); return; }
+  startFree($("freeTitle").value.trim() || L("Mi práctica", "My practice"), phrases);
 });
 $("freeSaveList").addEventListener("click", () => {
   const phrases = splitPhrases($("freeText").value);
-  if (!phrases.length) { toast("Escribe o pega al menos una frase primero."); return; }
+  if (!phrases.length) { toast(L("Escribe o pega al menos una frase primero.", "Type or paste at least one phrase first.")); return; }
   const title = $("freeTitle").value.trim() || `Mi práctica ${scripts.length + 1}`;
   scripts.unshift({ id: "s" + Date.now(), title, phrases });
   saveAll();
-  toast(`«${title}» guardada en Mi práctica. 💗`);
+  toast(L(`«${title}» guardada en Mi práctica. 💗`, `«${title}» saved to Mi práctica. 💗`));
 });
 $("freeTalk").addEventListener("click", () => activeRec ? stopListening() : freeTalk());
 $("freeListen").addEventListener("click", () => speak(free.phrases[free.idx]));
-$("freeNext").addEventListener("click", () => { free.idx = (free.idx + 1) % free.phrases.length; if (free.idx === 0) toast("¡Lista completa! Otra vuelta refuerza. 💪"); renderFreePhrase(); });
+$("freeNext").addEventListener("click", () => { free.idx = (free.idx + 1) % free.phrases.length; if (free.idx === 0) toast(L("¡Lista completa! Otra vuelta refuerza. 💪", "List complete! Another lap makes it stick. 💪")); renderFreePhrase(); });
 $("freeEdit").addEventListener("click", () => {
   $("freeText").value = free.phrases.join("\n");
   $("freeTitle").value = free.title;
@@ -728,31 +911,38 @@ function renderProgress() {
   }).join("");
   const metDays = vals.filter(v => v >= goal).length;
   $("chartNote").textContent = metDays
-    ? `Cumpliste tu meta de ${goal} latidos en ${metDays} de los últimos 14 días. ${metDays >= 10 ? "Eso ya es un hábito. 🌟" : metDays >= 5 ? "Se está volviendo costumbre. 💪" : "Cada día cuenta — hoy es buen día. 💗"}`
-    : `Tu meta es ${goal} latidos al día — unos 10 minutos. El primer día verde se siente increíble.`;
+    ? L(`Cumpliste tu meta de ${goal} latidos en ${metDays} de los últimos 14 días. ${metDays >= 10 ? "Eso ya es un hábito. 🌟" : metDays >= 5 ? "Se está volviendo costumbre. 💪" : "Cada día cuenta — hoy es buen día. 💗"}`,
+        `You hit your ${goal}-latido goal on ${metDays} of the last 14 days. ${metDays >= 10 ? "That's a habit now. 🌟" : metDays >= 5 ? "It's becoming routine. 💪" : "Every day counts — today's a good one. 💗"}`)
+    : L(`Tu meta es ${goal} latidos al día — unos 10 minutos. El primer día verde se siente increíble.`,
+        `Your goal is ${goal} latidos a day — about 10 minutes. The first green day feels amazing.`);
 
   // per-sala bests
   $("salaProg").innerHTML = allScenarios().map(s => {
     const b = progress.best[s.id] || 0;
-    return `<div class="sala-row"><span class="s-t">${s.room ? "Sala " + s.room + " · " : ""}${s.title}</span>
+    return `<div class="sala-row"><span class="s-t">${s.room ? "Sala " + esc(s.room) + " · " : ""}${esc(s.title)}</span>
       <div class="s-bar"><div class="s-fill" style="width:${b}%"></div></div>
       <span class="s-v">${b ? b + "%" : "—"}</span></div>`;
   }).join("");
 
   // her why
-  const GOALS = { rotaciones: "🏥 Para mis rotaciones y la clínica", osce: "📋 Para OSCEs y exámenes", comunidad: "❤️ Para mi comunidad", amor: "✨ Por amor al idioma" };
+  const GOALS = {
+    rotaciones: L("🏥 Para mis rotaciones y la clínica", "🏥 For my rotations and clinic"),
+    osce: L("📋 Para OSCEs y exámenes", "📋 For OSCEs and exams"),
+    comunidad: L("❤️ Para mi comunidad", "❤️ For my community"),
+    amor: L("✨ Por amor al idioma", "✨ For love of the language")
+  };
   $("whyStory").textContent = profile && profile.story
     ? `«${profile.story}»`
-    : "Escribiste tu meta al empezar — aquí viviría. (Puedes contárnosla de nuevo borrando tu perfil… o simplemente sigue practicando.)";
+    : L("Escribiste tu meta al empezar — aquí viviría. (O simplemente sigue practicando.)", "Your goal in your own words would live here — you can keep practicing without it.");
   $("whyChips").innerHTML = profile ? [
-    `<span class="chip">${GOALS[profile.goal] || "💗 Aprender"}</span>`,
-    ...(profile.struggles || []).map(s => `<span class="chip">trabajando: ${STRUGGLE_LABELS[s] || s}</span>`)
+    `<span class="chip">${GOALS[profile.goal] || "💗"}</span>`,
+    ...(profile.struggles || []).map(s => `<span class="chip">${L("trabajando:", "working on:")} ${esc(STRUGGLE_LABELS[s] || s)}</span>`)
   ].join("") : "";
 
   // history
   $("histList").innerHTML = progress.history.length
-    ? progress.history.slice(0, 10).map(h => `<div class="hist-row"><span class="h-d">${h.d.slice(5)}</span><span>${h.title}</span><span class="h-acc" style="color:${h.acc >= 80 ? "var(--verde-vital)" : h.acc >= 50 ? "var(--ambar)" : "var(--rojo)"}">${h.acc}%</span></div>`).join("")
-    : `<p style="color:var(--tinta-suave); font-size:.88rem">Tu primer encuentro aparecerá aquí. Las salas te esperan. 🚪</p>`;
+    ? progress.history.slice(0, 10).map(h => `<div class="hist-row"><span class="h-d">${esc(String(h.d).slice(5))}</span><span>${esc(h.title)}</span><span class="h-acc" style="color:${h.acc >= 80 ? "var(--verde-tinta)" : h.acc >= 50 ? "var(--ambar-tinta)" : "var(--rojo)"}">${+h.acc || 0}%</span></div>`).join("")
+    : `<p style="color:var(--tinta-suave); font-size:.88rem">${L("Tu primer encuentro aparecerá aquí. Las salas te esperan. 🚪", "Your first encounter will show up here. The rooms are waiting. 🚪")}</p>`;
 }
 
 $("backupSave").addEventListener("click", () => {
@@ -761,7 +951,7 @@ $("backupSave").addEventListener("click", () => {
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
   a.download = `clinicabridge_${norm(profile ? profile.name : "progreso").replace(/\s+/g, "_")}_${todayKey()}.json`;
   a.click();
-  toast("💾 Copia guardada — mándatela por correo o guárdala donde quieras.");
+  toast(L("💾 Copia guardada — mándatela por correo o guárdala donde quieras.", "💾 Copy saved — email it to yourself or keep it anywhere."));
 });
 $("backupLoad").addEventListener("change", e => {
   const f = e.target.files[0];
@@ -777,7 +967,7 @@ $("backupLoad").addEventListener("change", e => {
       progress.days = progress.days || {}; progress.history = progress.history || [];
       saveAll();
       renderProgress(); renderHeader();
-      toast(`¡Bienvenida de vuelta, ${displayName()}! Todo tu progreso está aquí. 💗`);
+      toast(`¡Qué gusto verte de vuelta, ${displayName()}! Todo tu progreso está aquí. 💗`);
       confetti(50);
     } catch { toast("Ese archivo no parece una copia de ClínicaBridge."); }
   };
@@ -789,7 +979,7 @@ $("backupLoad").addEventListener("change", e => {
 // SIM — the encounter
 // ============================================================
 let sim = null;
-let camStream = null, recorder = null, recChunks = [], recURL = null;
+let camStream = null, recorder = null, recChunks = [], recURL = null, recMime = "video/webm";
 let presence = { on: false, samples: 0, facing: 0, timer: null, detector: null };
 let simTimerH = null;
 
@@ -797,7 +987,8 @@ function allScenarios() { return [...SCENARIOS, ...customScenarios]; }
 
 async function startSim(scId) {
   const sc = allScenarios().find(s => s.id === scId);
-  if (!sc || !sc.steps || !sc.steps.length) { toast("Esta sala no tiene pasos todavía."); return; }
+  if (!sc || !sc.steps || !sc.steps.length) { toast(L("Esta sala no tiene pasos todavía.", "This room has no steps yet.")); return; }
+  if (sim && sim.av) { sim.av.destroy(); sim.av = null; } // retry path: kill the old portrait's timers
   sim = {
     sc, i: 0,
     stepScores: [], firstTry: [], hintMult: 1, attemptsThisStep: 0,
@@ -815,7 +1006,7 @@ async function startSim(scId) {
   $("pAge").textContent = pat.age ? `${pat.age} años` : "";
   $("pPersona").textContent = pat.persona || "";
   if (sim.av) sim.av.destroy();
-  sim.av = createAvatar($("avatarWrap"), sc.id);
+  sim.av = createAvatar($("avatarWrap"), sc.id, { label: pat.name });
 
   // timer
   clearInterval(simTimerH);
@@ -826,6 +1017,7 @@ async function startSim(scId) {
 
   // reset per-encounter capture state + HUD chips
   recURL = null; recChunks = [];
+  presence = { on: false, samples: 0, facing: 0, timer: null, detector: null };
   $("simRecWrap").style.display = "none";
   $("simPresenceWrap").style.display = "none";
   $("dbDownload").style.display = "none";
@@ -847,16 +1039,21 @@ async function setupCamera() {
   try {
     camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: settings.rec });
     video.srcObject = camStream;
+    // recording failure must not take down the live camera — separate try
     if (settings.rec && window.MediaRecorder) {
-      recChunks = []; recURL = null;
-      recorder = new MediaRecorder(camStream);
-      recorder.ondataavailable = e => { if (e.data.size) recChunks.push(e.data); };
-      recorder.start();
-      $("simRecWrap").style.display = "inline-flex";
+      try {
+        recChunks = []; recURL = null;
+        const mime = ["video/webm;codecs=vp9,opus", "video/webm", "video/mp4"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+        recorder = mime ? new MediaRecorder(camStream, { mimeType: mime }) : new MediaRecorder(camStream);
+        recorder.ondataavailable = e => { if (e.data.size) recChunks.push(e.data); };
+        recorder.start();
+        $("simRecWrap").style.display = "inline-flex";
+      } catch { recorder = null; $("simRecWrap").style.display = "none"; }
     } else $("simRecWrap").style.display = "none";
     startPresence(video);
   } catch (err) {
-    camRow.innerHTML = `<div class="cam-off-note">📷 No pude acceder a la cámara (${err.name}). El encuentro funciona igual — solo sin video.</div>`;
+    if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+    camRow.innerHTML = `<div class="cam-off-note">📷 No pude acceder a la cámara (${esc(err.name)}). El encuentro funciona igual — solo sin video.</div>`;
   }
 }
 
@@ -908,32 +1105,45 @@ async function runStep() {
   $("cueText").textContent = st.cue || "Respond in Spanish.";
   $("kEn").textContent = settings.showEn ? (st.target.en || "") : "";
   const hidden = !settings.reveal;
-  $("kHintState").textContent = hidden ? "palabras ocultas — se revelan al decirlas" : "frase visible";
+  $("kHintState").textContent = hidden
+    ? L("palabras ocultas — se revelan al decirlas", "words hidden — they reveal as you say them")
+    : L("frase visible", "phrase visible");
   renderKaraoke($("kWords"), st.target.es, null, hidden);
-  $("liveTx").innerHTML = "Pulsa <b>Hablar</b> cuando estés listo.";
+  $("liveTx").innerHTML = L("Pulsa <b>Hablar</b> cuando quieras.", "Press <b>Speak</b> whenever you're ready.");
   renderStepDots();
   // patient speaks
   await patientSay(st.patient.es, st.patient.en);
 }
 
+// patients address the learner the way SHE chose to be addressed
+function localizeVocative(es) {
+  if (!profile) return es;
+  const map = { "Doctora": "doctora", "Doctor": "doctor", "Dre.": "doctore" };
+  const voc = map[profile.title] || (profile.name ? profile.name.split(" ")[0] : "doctor");
+  return es.replace(/\b[Dd]octora?\b/g, m => m[0] === "D" ? voc[0].toUpperCase() + voc.slice(1) : voc);
+}
+
 async function patientSay(es, en) {
+  es = localizeVocative(es);
   const arc = SCENARIO_MOODS[sim.sc.id];
-  if (sim.av) {
-    sim.av.setMood((arc && arc[sim.i]) || (currentStep() && currentStep().mood) || "neutral");
-    sim.av.speak(true);
+  const av = sim.av; // capture: a late TTS resolution must not touch a newer encounter's avatar
+  if (av) {
+    av.setMood((arc && arc[sim.i]) || (currentStep() && currentStep().mood) || "neutral");
+    av.speak(true);
   }
   $("pSubEn").textContent = settings.showEn ? (en || "") : "";
   // typewriter subtitle in sync-ish with speech
   const el = $("pSubEs"); el.textContent = "";
+  clearInterval(sim._typeH);
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce) el.textContent = es;
   else {
     let k = 0;
-    const h = setInterval(() => { el.textContent = es.slice(0, ++k); if (k >= es.length) clearInterval(h); }, 28);
+    sim._typeH = setInterval(() => { el.textContent = es.slice(0, ++k); if (k >= es.length) clearInterval(sim._typeH); }, 28);
   }
   const v = (sim.sc.patient && sim.sc.patient.voice) || {};
-  await speak(es, { pitch: v.pitch || 1, rate: v.rate || 1 });
-  if (sim && sim.av) sim.av.speak(false);
+  await speak(es, { pitch: v.pitch || 1, rate: v.rate || 1, gender: v.gender });
+  if (sim && sim.av === av && av) av.speak(false);
 }
 
 function renderStepDots() {
@@ -942,10 +1152,11 @@ function renderStepDots() {
 }
 
 function simTalk() {
+  if (!srSupported) { toast("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge."); return; }
   const st = currentStep();
   $("talkBtn").classList.add("listening");
   $("micDot").classList.add("live");
-  $("liveTx").textContent = "Escuchando…";
+  $("liveTx").textContent = L("Escuchando…", "Listening…");
   const hidden = !settings.reveal && sim.hintMult === 1;
   listenOnce({
     onInterim: txt => {
@@ -956,7 +1167,7 @@ function simTalk() {
     onFinal: (txt, alts) => {
       $("talkBtn").classList.remove("listening");
       $("micDot").classList.remove("live");
-      if (!txt && !alts.length) { $("liveTx").textContent = "No te escuché — acércate al micrófono e inténtalo otra vez."; return; }
+      if (!txt && !alts.length) { $("liveTx").textContent = L("No te escuché — acércate al micrófono e inténtalo otra vez.", "I didn't hear you — get closer to the mic and try again."); return; }
       sim.attemptsThisStep++;
       let best = scorePhrase(st.target.es, st.alt, txt);
       alts.forEach(a => { const s = scorePhrase(st.target.es, st.alt, a); if (s.score > best.score) best = s; });
@@ -973,7 +1184,7 @@ function simTalk() {
       awardLatidos(pct >= 80 ? 10 : pct >= 50 ? 5 : 2, true);
       if (pct >= 80) {
         toast(cheer());
-        setTimeout(acceptStep, 1100);
+        sim.autoAdvanceH = setTimeout(acceptStep, 1100);
       } else {
         toast(nudge());
       }
@@ -983,6 +1194,8 @@ function simTalk() {
 
 function acceptStep() {
   if (!sim || sim.done || $("acceptBtn").disabled) return;
+  if (!$("view-sim").classList.contains("active")) return; // user already left the encounter
+  clearTimeout(sim.autoAdvanceH);
   $("acceptBtn").disabled = true;
   const sc = sim.lastScore ? sim.lastScore.eff : 0;
   sim.stepScores.push(sc);
@@ -997,7 +1210,7 @@ function acceptStep() {
 function useHint() {
   const st = currentStep();
   sim.hintMult = Math.min(sim.hintMult, 0.75);
-  $("kHintState").textContent = "pista usada — frase visible (–25%)";
+  $("kHintState").textContent = L("pista usada — frase visible (–25%)", "hint used — phrase revealed (–25%)");
   renderKaraoke($("kWords"), st.target.es, null, false);
 }
 function useListen() {
@@ -1047,11 +1260,11 @@ function endSim() {
   $("simStage").style.display = "none";
   $("debrief").style.display = "block";
   const name = displayName();
-  const verdict = acc >= 85 ? `¡Excelente, ${name}!` : acc >= 70 ? `¡Muy bien, ${name}!` : acc >= 50 ? `En camino, ${name}.` : `Sigue practicando, ${name}.`;
+  const verdict = acc >= 85 ? L(`¡Excelente, ${name}!`, `Excellent, ${name}!`) : acc >= 70 ? L(`¡Muy bien, ${name}!`, `Very good, ${name}!`) : acc >= 50 ? L(`En camino, ${name}.`, `Getting there, ${name}.`) : L(`Sigue practicando, ${name}.`, `Keep practicing, ${name}.`);
   $("dbVerdict").textContent = verdict;
   $("dbSub").textContent = acc > prevBest && prevBest > 0
-    ? `Nuevo récord personal en esta sala — antes ${prevBest}%.`
-    : `${sim.sc.title} · ${sim.sc.steps.length} intercambios · +15 latidos por completar la sala.`;
+    ? L(`Nuevo récord personal en esta sala — antes ${prevBest}%.`, `New personal record in this room — previously ${prevBest}%.`)
+    : L(`${sim.sc.title} · ${sim.sc.steps.length} intercambios · +15 latidos por completar la sala.`, `${sim.sc.title} · ${sim.sc.steps.length} exchanges · +15 latidos for completing the room.`);
   const setBar = (fillId, valId, pct) => {
     $(valId).textContent = pct != null ? pct + "%" : "n/a";
     requestAnimationFrame(() => { $(fillId).style.width = (pct || 0) + "%"; });
@@ -1064,9 +1277,10 @@ function endSim() {
 
   // missed phrases
   const missed = sim.sc.steps.filter((st, i) => sim.stepScores[i] < 0.6);
+  const mh = L("FRASES PARA REPASAR", "PHRASES TO REVIEW");
   $("dbMissed").innerHTML = missed.length
-    ? `<h4>FRASES PARA REPASAR</h4><ul>` + missed.map(st => `<li><b>${st.target.es}</b><br>${st.target.en || ""}</li>`).join("") + `</ul>`
-    : `<h4>FRASES PARA REPASAR</h4><p style="color:var(--sim-texto-suave)">Ninguna — dominaste todas las frases. 🎉</p>`;
+    ? `<h4>${mh}</h4><ul>` + missed.map(st => `<li><b>${esc(st.target.es)}</b><br><span lang="en">${esc(st.target.en || "")}</span></li>`).join("") + `</ul>`
+    : `<h4>${mh}</h4><p style="color:var(--sim-texto-suave)">${L("Ninguna — dominaste todas las frases. 🎉", "None — you nailed every phrase. 🎉")}</p>`;
 
   $("dbDownload").style.display = recURL ? "inline-flex" : "none";
   if (acc >= 70) confetti(acc >= 85 ? 110 : 60);
@@ -1076,8 +1290,9 @@ function stopCaptureKeepURL() {
   clearInterval(simTimerH);
   if (presence.timer) { clearInterval(presence.timer); presence.timer = null; }
   if (recorder && recorder.state !== "inactive") {
+    const mime = recMime = recorder.mimeType || "video/webm";
     recorder.onstop = () => {
-      if (recChunks.length) recURL = URL.createObjectURL(new Blob(recChunks, { type: "video/webm" }));
+      if (recChunks.length) recURL = URL.createObjectURL(new Blob(recChunks, { type: mime }));
       $("dbDownload").style.display = recURL && sim && sim.done ? "inline-flex" : "none";
     };
     recorder.stop();
@@ -1088,7 +1303,13 @@ function stopCaptureKeepURL() {
 
 function teardownSim() {
   clearInterval(simTimerH);
-  if (sim && sim.av) { sim.av.destroy(); sim.av = null; }
+  if (sim) {
+    clearTimeout(sim.autoAdvanceH);
+    clearInterval(sim._typeH);
+    sim.done = true;
+    if (sim.av) { sim.av.destroy(); sim.av = null; }
+  }
+  $("acceptBtn").disabled = true;
   if (presence.timer) { clearInterval(presence.timer); presence.timer = null; }
   presence.detector = null; // keep faceDetectorCache for the next encounter
   if (recorder && recorder.state !== "inactive") { try { recorder.stop(); } catch {} }
@@ -1102,7 +1323,7 @@ $("dbDownload").addEventListener("click", () => {
   if (!recURL) return;
   const a = document.createElement("a");
   a.href = recURL;
-  a.download = `encuentro_${sim.sc.id}_${todayKey()}.webm`;
+  a.download = `encuentro_${sim.sc.id}_${todayKey()}.${recMime.includes("mp4") ? "mp4" : "webm"}`;
   a.click();
 });
 
@@ -1110,16 +1331,17 @@ $("dbDownload").addEventListener("click", () => {
 // BUILDER
 // ============================================================
 function stepBlockHTML(n, s = {}) {
+  const uid = `st${n}_${Math.random().toString(36).slice(2, 6)}`;
   return `<div class="step-block">
     <span class="step-n">PASO ${n}</span>
-    <button class="mini-btn rm-step" style="border-color:var(--linea); color:var(--tinta-suave)">✕</button>
+    <button class="mini-btn rm-step" aria-label="Quitar paso" style="border-color:var(--linea); color:var(--tinta-suave)">✕</button>
     <div class="form-grid" style="margin-top:10px">
-      <div><label class="f-label">El paciente dice (ES)</label><input class="f-in s-pes" value="${s.pes || ""}" placeholder="Me duele mucho la espalda."></div>
-      <div><label class="f-label">Patient line (EN)</label><input class="f-in s-pen" value="${s.pen || ""}" placeholder="My back hurts a lot."></div>
-      <div class="full"><label class="f-label">Your move (cue, EN)</label><input class="f-in s-cue" value="${s.cue || ""}" placeholder="Ask when it started and what makes it worse."></div>
-      <div><label class="f-label">Respuesta objetivo (ES)</label><input class="f-in s-tes" value="${s.tes || ""}" placeholder="¿Cuándo comenzó? ¿Qué lo empeora?"></div>
-      <div><label class="f-label">Target (EN)</label><input class="f-in s-ten" value="${s.ten || ""}" placeholder="When did it start? What makes it worse?"></div>
-      <div class="full"><label class="f-label">Alternates (ES, separa con | )</label><input class="f-in s-alt" value="${s.alt || ""}" placeholder="¿Desde cuándo le duele? | ¿Cuándo empezó el dolor?"></div>
+      <div><label class="f-label" for="${uid}p">El paciente dice (ES)</label><input id="${uid}p" class="f-in s-pes" value="${esc(s.pes || "")}" placeholder="Me duele mucho la espalda."></div>
+      <div><label class="f-label" for="${uid}pe">Patient line (EN)</label><input id="${uid}pe" class="f-in s-pen" value="${esc(s.pen || "")}" placeholder="My back hurts a lot."></div>
+      <div class="full"><label class="f-label" for="${uid}c">Your move (cue, EN)</label><input id="${uid}c" class="f-in s-cue" value="${esc(s.cue || "")}" placeholder="Ask when it started and what makes it worse."></div>
+      <div><label class="f-label" for="${uid}t">Respuesta objetivo (ES)</label><input id="${uid}t" class="f-in s-tes" value="${esc(s.tes || "")}" placeholder="¿Cuándo comenzó? ¿Qué lo empeora?"></div>
+      <div><label class="f-label" for="${uid}te">Target (EN)</label><input id="${uid}te" class="f-in s-ten" value="${esc(s.ten || "")}" placeholder="When did it start? What makes it worse?"></div>
+      <div class="full"><label class="f-label" for="${uid}a">Alternates (ES, separa con | )</label><input id="${uid}a" class="f-in s-alt" value="${esc(s.alt || "")}" placeholder="¿Desde cuándo le duele? | ¿Cuándo empezó el dolor?"></div>
     </div>
   </div>`;
 }
@@ -1159,10 +1381,10 @@ function collectScenario() {
 }
 $("bSave").addEventListener("click", () => {
   const sc = collectScenario();
-  if (!sc) { toast("Ponle un título y al menos un paso completo (paciente + respuesta)."); return; }
+  if (!sc) { toast(L("Ponle un título y al menos un paso completo (paciente + respuesta).", "Give it a title and at least one complete step (patient line + response).")); return; }
   customScenarios.push(sc);
   saveAll();
-  toast(`Sala «${sc.title}» guardada. ¡A practicar!`);
+  toast(L(`Sala «${sc.title}» guardada. ¡A practicar!`, `Room «${sc.title}» saved. Go practice!`));
   show("home");
 });
 $("bExport").addEventListener("click", () => {
@@ -1202,6 +1424,7 @@ function refreshNtfyRow() {
   if (on) $("setTopic").textContent = profile.ntfy.topic;
 }
 $("settingsBtn").addEventListener("click", () => {
+  $("setUiLang").value = settings.uiLang;
   $("setDialect").value = settings.dialect;
   $("setRate").value = settings.rate;
   $("setEn").checked = settings.showEn;
@@ -1212,6 +1435,15 @@ $("settingsBtn").addEventListener("click", () => {
   loadVoices();
   $("settingsModal").showModal();
 });
+$("setUiLang").addEventListener("change", () => setUILang($("setUiLang").value));
+$("setVoiceTest").addEventListener("click", () => {
+  const uri = $("setVoice").value;
+  const prev = { uri: settings.voiceURI, auto: settings.voiceAuto };
+  settings.voiceURI = uri; settings.voiceAuto = false;
+  speak("Hola, mucho gusto. Soy su paciente virtual. ¿Cómo está usted hoy?").then(() => {
+    settings.voiceURI = prev.uri; settings.voiceAuto = prev.auto;
+  });
+});
 $("setNtfy").addEventListener("change", () => {
   if (!profile) { $("setNtfy").checked = false; return; }
   profile.ntfy = profile.ntfy || { on: false, topic: "" };
@@ -1220,10 +1452,13 @@ $("setNtfy").addEventListener("change", () => {
   saveAll();
   refreshNtfyRow();
 });
-$("setNtfyTest").addEventListener("click", ntfyTest);
+$("setNtfyTest").addEventListener("click", () => ntfyTest());
 $("settingsClose").addEventListener("click", () => {
   settings.dialect = $("setDialect").value;
-  settings.voiceURI = $("setVoice").value;
+  if ($("setVoice").value && $("setVoice").value !== settings.voiceURI) {
+    settings.voiceURI = $("setVoice").value;
+    settings.voiceAuto = false; // she picked one herself — respect it
+  }
   settings.rate = +$("setRate").value;
   settings.showEn = $("setEn").checked;
   settings.cam = $("setCam").checked;
@@ -1231,7 +1466,7 @@ $("settingsClose").addEventListener("click", () => {
   settings.reveal = $("setReveal").checked;
   saveAll();
   $("settingsModal").close();
-  toast("Ajustes guardados.");
+  toast(L("Ajustes guardados.", "Settings saved."));
 });
 
 // ============================================================
@@ -1243,23 +1478,37 @@ function obShow(n) {
   [1, 2, 3, 4, 5, 6].forEach(i => $("ob" + i).classList.toggle("on", i === n));
   document.querySelectorAll(".ob-dot").forEach((d, i) => d.classList.toggle("on", i === n - 1));
 }
+function setChromeInert(on) {
+  // while onboarding covers the app, keep the header/main out of the tab order
+  document.querySelectorAll("header.app-header, main").forEach(el => {
+    if (on) el.setAttribute("inert", ""); else el.removeAttribute("inert");
+  });
+}
 function startOnboarding() {
   $("onboard").classList.add("active");
+  $("onboard").setAttribute("role", "dialog");
+  $("onboard").setAttribute("aria-modal", "true");
+  $("onboard").setAttribute("aria-label", "Bienvenida y configuración");
+  setChromeInert(true);
   obShow(1);
   setTimeout(() => $("obName").focus(), 300);
 }
 function wireChoices(containerId, cb) {
-  $(containerId).querySelectorAll(".ob-choice").forEach(b => b.addEventListener("click", () => {
-    $(containerId).querySelectorAll(".ob-choice").forEach(x => x.classList.remove("sel"));
-    b.classList.add("sel");
-    cb(b.dataset.v);
-  }));
+  $(containerId).querySelectorAll(".ob-choice").forEach(b => {
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => {
+      $(containerId).querySelectorAll(".ob-choice").forEach(x => { x.classList.remove("sel"); x.setAttribute("aria-pressed", "false"); });
+      b.classList.add("sel");
+      b.setAttribute("aria-pressed", "true");
+      cb(b.dataset.v);
+    });
+  });
 }
 // 1 — name + how patients address her
 wireChoices("obTitleChoices", v => { ob.title = v; });
 $("ob1Next").addEventListener("click", () => {
   const n = $("obName").value.trim();
-  if (!n) { toast("Dinos tu nombre para empezar 💗"); $("obName").focus(); return; }
+  if (!n) { toast(L("Dinos tu nombre para empezar 💗", "Tell us your name to get started 💗")); $("obName").focus(); return; }
   ob.name = n.replace(/\s+/g, " ");
   if (ob.title === null) ob.title = "";
   $("obNameEcho").textContent = ob.name;
@@ -1269,16 +1518,20 @@ $("obName").addEventListener("keydown", e => { if (e.key === "Enter") $("ob1Next
 // 2 — goal + her own words
 wireChoices("obGoalChoices", v => { ob.goal = v; });
 $("ob2Next").addEventListener("click", () => {
-  if (!ob.goal) { toast("Elige una — ¿para qué estás aprendiendo?"); return; }
+  if (!ob.goal) { toast(L("Elige una — ¿para qué estás aprendiendo?", "Pick one — what are you learning for?")); return; }
   ob.story = $("obStory").value.trim();
   obShow(3);
 });
 // 3 — struggles (multi-select)
-$("obStruggleChoices").querySelectorAll(".ob-choice").forEach(b => b.addEventListener("click", () => {
-  b.classList.toggle("sel");
-  const v = b.dataset.v;
-  ob.struggles = b.classList.contains("sel") ? [...ob.struggles, v] : ob.struggles.filter(x => x !== v);
-}));
+$("obStruggleChoices").querySelectorAll(".ob-choice").forEach(b => {
+  b.setAttribute("aria-pressed", "false");
+  b.addEventListener("click", () => {
+    b.classList.toggle("sel");
+    b.setAttribute("aria-pressed", String(b.classList.contains("sel")));
+    const v = b.dataset.v;
+    ob.struggles = b.classList.contains("sel") ? [...ob.struggles, v] : ob.struggles.filter(x => x !== v);
+  });
+});
 $("ob3Next").addEventListener("click", () => obShow(4));
 // 4 — level, 5 — daily goal
 wireChoices("obLevelChoices", v => { ob.level = v; setTimeout(() => obShow(5), 250); });
@@ -1305,14 +1558,15 @@ function finishOnboarding() {
   settings.reveal = ob.level === "semilla";
   saveAll();
   $("onboard").classList.remove("active");
+  setChromeInert(false);
   confetti(90);
   const openers = {
-    rotaciones: "Tus pacientes de las salas te están esperando.",
-    osce: "Cada sala termina con tu informe estilo OSCE.",
-    comunidad: "Cada frase que aprendes es alguien que se sentirá escuchado.",
-    amor: "Pues vamos a hablarlo bonito."
+    rotaciones: L("Tus pacientes de las salas te están esperando.", "Your patients in the rooms are waiting for you."),
+    osce: L("Cada sala termina con tu informe estilo OSCE.", "Every room ends with your OSCE-style report."),
+    comunidad: L("Cada frase que aprendes es alguien que se sentirá escuchado.", "Every phrase you learn is someone who'll feel heard."),
+    amor: L("Pues vamos a hablarlo bonito.", "Then let's speak it beautifully.")
   };
-  toast(`¡Bienvenida a bordo, ${displayName()}! ${openers[ob.goal] || ""}`, 4200);
+  toast(L(`Te damos la bienvenida a bordo, ${displayName()}.`, `Welcome aboard, ${displayName()}.`) + " " + (openers[ob.goal] || ""), 4200);
   renderHome();
 }
 
@@ -1320,6 +1574,7 @@ function finishOnboarding() {
 // KEYBOARD SHORTCUTS
 // ============================================================
 document.addEventListener("keydown", e => {
+  if (e.repeat) return; // held keys must not machine-gun the mic toggle
   const tag = (document.activeElement || {}).tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
   if ($("onboard").classList.contains("active")) return;
@@ -1345,6 +1600,7 @@ document.addEventListener("keydown", e => {
 // BOOT
 // ============================================================
 rollDay();
+applyUILang();
 renderHome();
 if (!profile || !profile.name) startOnboarding();
 else {
