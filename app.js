@@ -152,8 +152,8 @@ function ntfyTest(topic, name) {
       method: "POST",
       body: `¡Hola${who ? " " + who : ""}! 💗 Este es tu canal de porras de ClínicaBridge. Cada vez que cumplas tu meta o rompas un récord, te avisamos aquí. ¡Tú puedes!`,
       headers: { Title: "Porra de prueba - ClinicaBridge", Tags: "partying_face", Markdown: "yes" }
-    }).then(() => toast("📣 ¡Porra enviada! Revisa tu teléfono.")).catch(() => toast("No se pudo enviar — ¿hay internet?"));
-  } catch { toast("No se pudo enviar — ¿hay internet?"); }
+    }).then(() => toast(L("📣 ¡Porra enviada! Revisa tu teléfono.", "📣 Cheer sent! Check your phone."))).catch(() => toast(L("No se pudo enviar — ¿hay internet?", "Couldn't send — is there internet?")));
+  } catch { toast(L("No se pudo enviar — ¿hay internet?", "Couldn't send — is there internet?")); }
 }
 
 // ---------------- header / home stats ----------------
@@ -261,10 +261,12 @@ if (!srSupported) {
 }
 
 let activeRec = null;
+let srSession = 0; // bumped per listen; a stale recognizer's late flush must never touch a newer session
 function listenOnce({ onInterim, onFinal, onEnd, onError }) {
   if (!srSupported) { toast(L("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge.", "Your browser doesn't support speech recognition — use Chrome or Edge.")); return null; }
   stopListening(true); // discard any straggler recognizer so it can't desync the new one
   speechSynthesis.cancel(); // never listen while the patient is mid-sentence
+  const mySession = ++srSession;
   const rec = new SRClass();
   rec.lang = settings.dialect;
   rec.interimResults = true;
@@ -288,9 +290,10 @@ function listenOnce({ onInterim, onFinal, onEnd, onError }) {
     if (onError) onError(e.error);
   };
   rec.onend = () => {
-    // a discarded (aborted) recognizer must not touch state or fire callbacks —
-    // its late onend used to clear the NEW recognizer's tracking and wedge the mic
-    if (rec._discard) { if (activeRec === rec) activeRec = null; return; }
+    // a discarded OR superseded recognizer must not touch state or fire callbacks —
+    // a late onend from an earlier session used to score a stale utterance into the
+    // new attempt and desync the talk button (the "Hablar/Space glitch")
+    if (rec._discard || mySession !== srSession) { if (activeRec === rec) activeRec = null; return; }
     if (activeRec === rec) activeRec = null;
     if (onFinal) onFinal(finalText.trim(), alternatives);
     if (onEnd) onEnd();
@@ -448,6 +451,13 @@ function applyUILang() {
     const val = strong.textContent;
     strong.parentElement.innerHTML = `${emoji} <strong id="${id}">${val}</strong>&nbsp;${L(es, en)}`;
   });
+  document.querySelectorAll('[data-nav="home"]').forEach(b => b.innerHTML = L("← Volver", "← Back"));
+  const bl = $("backupLoadLbl"); if (bl) bl.textContent = L("📂 Traer mi copia", "📂 Bring my copy");
+  const bi = $("bImportLbl"); if (bi) bi.innerHTML = L("⬆ Importar JSON", "⬆ Import JSON");
+  const pe = $("pgEyebrow"); if (pe) pe.textContent = L("MI PROGRESO · KEEP GETTING BETTER", "MY PROGRESS · KEEP GETTING BETTER");
+  [["pgStreak", "🔥 racha (días)", "🔥 streak (days)"], ["pgLatidos", "💗 latidos totales", "💗 total latidos"], ["pgMin", "⏱️ minutos hablando", "⏱️ minutes speaking"]].forEach(([id, es, en]) => {
+    const n = $(id); if (n && n.nextElementSibling) n.nextElementSibling.textContent = L(es, en);
+  });
   $("langBtnLabel").textContent = settings.uiLang === "en" ? "ES" : "EN";
   $("langBtn").title = settings.uiLang === "en" ? "Cambiar las instrucciones a español" : "Switch instructions to English";
   $("obLangEs").setAttribute("aria-pressed", String(settings.uiLang === "es"));
@@ -461,6 +471,19 @@ function setUILang(lang) {
   renderHeader();
   if ($("view-home").classList.contains("active")) renderHome();
   if ($("view-progress").classList.contains("active")) renderProgress();
+  // refresh the dynamic coaching strings of whichever practice view is live
+  if (!activeRec) {
+    if (sim && !sim.done && $("view-sim").classList.contains("active") && $("debrief").style.display === "none") {
+      const hidden = !settings.reveal && sim.hintMult === 1;
+      $("kHintState").textContent = sim.hintMult < 1
+        ? L("pista usada — frase visible (–25%)", "hint used — phrase revealed (–25%)")
+        : hidden ? L("palabras ocultas — se revelan al decirlas", "words hidden — they reveal as you say them")
+                 : L("frase visible", "phrase visible");
+      if (!sim.lastScore) $("liveTx").innerHTML = L("Pulsa <b>Hablar</b> cuando quieras.", "Press <b>Speak</b> whenever you're ready.");
+    }
+    if (drill && $("view-drill").classList.contains("active")) $("drillLive").innerHTML = L("Pulsa <b>Hablar</b> y di la frase.", "Press <b>Speak</b> and say the phrase.");
+    if (free && $("view-free").classList.contains("active") && $("freeRun").style.display !== "none") $("freeLive").innerHTML = L("Pulsa <b>Hablar</b> y di la frase.", "Press <b>Speak</b> and say the phrase.");
+  }
 }
 $("langBtn").addEventListener("click", () => {
   setUILang(settings.uiLang === "en" ? "es" : "en");
@@ -670,7 +693,7 @@ function nudge() { const n = NUDGES[Math.floor(Math.random() * NUDGES.length)]; 
 let drill = null; // {set, idx, attempted}
 function startDrill(setId) {
   const set = DRILL_SETS.find(s => s.id === setId);
-  if (!set) { toast("Ese ejercicio no existe."); show("home"); return; }
+  if (!set) { toast(L("Ese ejercicio no existe.", "That drill doesn't exist.")); show("home"); return; }
   drill = { set, idx: 0 };
   show("drill");
   $("drillTitle").textContent = set.title;
@@ -692,7 +715,7 @@ function renderDrillPhrase() {
   $("drillTip").innerHTML = `<b>${L("TIP DE PRONUNCIACIÓN", "PRONUNCIATION TIP")}</b>${L(tip.es, tip.en)}`;
 }
 function drillTalk() {
-  if (!srSupported) { toast("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge."); return; }
+  if (!srSupported) { toast(L("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge.", "Your browser doesn't support speech recognition — use Chrome or Edge.")); return; }
   const { set, idx } = drill;
   const p = set.phrases[idx];
   $("drillTalk").classList.add("listening");
@@ -738,7 +761,7 @@ $("drillNext").addEventListener("click", () => {
 let deck = null; // {d, order, pos}
 function startDeck(deckId) {
   const d = DECKS.find(x => x.id === deckId);
-  if (!d) { toast("Ese mazo no existe."); show("home"); return; }
+  if (!d) { toast(L("Ese mazo no existe.", "That deck doesn't exist.")); show("home"); return; }
   const order = d.cards.map((_, i) => i).sort(() => Math.random() - .5);
   deck = { d, order, pos: 0 };
   show("deck");
@@ -836,7 +859,7 @@ function renderFreePhrase() {
   $("freeCoach").style.display = "none";
 }
 function freeTalk() {
-  if (!srSupported) { toast("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge."); return; }
+  if (!srSupported) { toast(L("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge.", "Your browser doesn't support speech recognition — use Chrome or Edge.")); return; }
   const p = free.phrases[free.idx];
   $("freeTalk").classList.add("listening");
   $("freeMicDot").classList.add("live");
@@ -967,9 +990,9 @@ $("backupLoad").addEventListener("change", e => {
       progress.days = progress.days || {}; progress.history = progress.history || [];
       saveAll();
       renderProgress(); renderHeader();
-      toast(`¡Qué gusto verte de vuelta, ${displayName()}! Todo tu progreso está aquí. 💗`);
+      toast(L(`¡Qué gusto verte de vuelta, ${displayName()}! Todo tu progreso está aquí. 💗`, `Great to see you back, ${displayName()}! All your progress is here. 💗`));
       confetti(50);
-    } catch { toast("Ese archivo no parece una copia de ClínicaBridge."); }
+    } catch { toast(L("Ese archivo no parece una copia de ClínicaBridge.", "That file doesn't look like a ClínicaBridge backup.")); }
   };
   r.readAsText(f);
   e.target.value = "";
@@ -1152,7 +1175,7 @@ function renderStepDots() {
 }
 
 function simTalk() {
-  if (!srSupported) { toast("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge."); return; }
+  if (!srSupported) { toast(L("Tu navegador no soporta reconocimiento de voz — usa Chrome o Edge.", "Your browser doesn't support speech recognition — use Chrome or Edge.")); return; }
   const st = currentStep();
   $("talkBtn").classList.add("listening");
   $("micDot").classList.add("live");
@@ -1389,7 +1412,7 @@ $("bSave").addEventListener("click", () => {
 });
 $("bExport").addEventListener("click", () => {
   const sc = collectScenario();
-  if (!sc) { toast("Completa la sala antes de exportar."); return; }
+  if (!sc) { toast(L("Completa la sala antes de exportar.", "Finish the room before exporting.")); return; }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(sc, null, 2)], { type: "application/json" }));
   a.download = `clinicabridge_${norm(sc.title).replace(/\s+/g, "_")}.json`;
@@ -1406,9 +1429,9 @@ $("bImport").addEventListener("change", e => {
       sc.id = "custom_" + Date.now();
       customScenarios.push(sc);
       saveAll();
-      toast(`Sala «${sc.title}» importada.`);
+      toast(L(`Sala «${sc.title}» importada.`, `Room «${sc.title}» imported.`));
       show("home");
-    } catch { toast("Ese archivo no parece una sala de ClínicaBridge."); }
+    } catch { toast(L("Ese archivo no parece una sala de ClínicaBridge.", "That file doesn't look like a ClínicaBridge room.")); }
   };
   r.readAsText(f);
   e.target.value = "";
@@ -1436,12 +1459,13 @@ $("settingsBtn").addEventListener("click", () => {
   $("settingsModal").showModal();
 });
 $("setUiLang").addEventListener("change", () => setUILang($("setUiLang").value));
+let voiceRestore = null; // pending preview-undo; cancelled if the user commits via Listo mid-preview
 $("setVoiceTest").addEventListener("click", () => {
   const uri = $("setVoice").value;
-  const prev = { uri: settings.voiceURI, auto: settings.voiceAuto };
+  voiceRestore = { uri: settings.voiceURI, auto: settings.voiceAuto };
   settings.voiceURI = uri; settings.voiceAuto = false;
   speak("Hola, mucho gusto. Soy su paciente virtual. ¿Cómo está usted hoy?").then(() => {
-    settings.voiceURI = prev.uri; settings.voiceAuto = prev.auto;
+    if (voiceRestore) { settings.voiceURI = voiceRestore.uri; settings.voiceAuto = voiceRestore.auto; voiceRestore = null; }
   });
 });
 $("setNtfy").addEventListener("change", () => {
@@ -1454,6 +1478,7 @@ $("setNtfy").addEventListener("change", () => {
 });
 $("setNtfyTest").addEventListener("click", () => ntfyTest());
 $("settingsClose").addEventListener("click", () => {
+  voiceRestore = null; // closing commits the current state; drop any pending preview-undo
   settings.dialect = $("setDialect").value;
   if ($("setVoice").value && $("setVoice").value !== settings.voiceURI) {
     settings.voiceURI = $("setVoice").value;
